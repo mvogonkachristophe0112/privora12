@@ -22,6 +22,8 @@ export enum AuditSeverity {
   CRITICAL = 'CRITICAL'
 }
 
+export type AuditDetails = string | { type?: string; [key: string]: any };
+
 export interface AuditLogData {
   userId?: string
   action: AuditAction
@@ -154,6 +156,19 @@ export async function getAuditStats(options: {
 }
 
 // Security monitoring functions
+function parseDetails(details: unknown): any | undefined {
+  if (!details) return undefined;
+  if (typeof details === 'string') {
+    try {
+      return JSON.parse(details);
+    } catch {
+      // Not JSON; nothing to read
+      return undefined;
+    }
+  }
+  return details;
+}
+
 export async function detectSuspiciousActivity(userId: string) {
   const recentLogs = await prisma.auditLog.findMany({
     where: {
@@ -165,10 +180,12 @@ export async function detectSuspiciousActivity(userId: string) {
     orderBy: { createdAt: 'desc' }
   })
 
-  const failedLogins = recentLogs.filter(log =>
-    log.action === AuditAction.SECURITY_EVENT &&
-    log.details?.type === 'failed_login'
-  ).length
+  const failedLogins = recentLogs.filter(log => {
+    if (log.action !== AuditAction.SECURITY_EVENT) return false;
+    if (typeof log.details !== 'object' || log.details === null) return false;
+    const details = log.details as Record<string, unknown>;
+    return details.type === 'failed_login';
+  }).length
 
   const unusualDownloads = recentLogs.filter(log =>
     log.action === AuditAction.FILE_DOWNLOAD
