@@ -1,0 +1,201 @@
+import { prisma } from './prisma'
+
+export enum AuditAction {
+  USER_LOGIN = 'USER_LOGIN',
+  USER_LOGOUT = 'USER_LOGOUT',
+  USER_REGISTER = 'USER_REGISTER',
+  FILE_UPLOAD = 'FILE_UPLOAD',
+  FILE_DOWNLOAD = 'FILE_DOWNLOAD',
+  FILE_DELETE = 'FILE_DELETE',
+  FILE_SHARE = 'FILE_SHARE',
+  FILE_ACCESS = 'FILE_ACCESS',
+  MESSAGE_SEND = 'MESSAGE_SEND',
+  SETTINGS_CHANGE = 'SETTINGS_CHANGE',
+  ADMIN_ACTION = 'ADMIN_ACTION',
+  SECURITY_EVENT = 'SECURITY_EVENT'
+}
+
+export enum AuditSeverity {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  CRITICAL = 'CRITICAL'
+}
+
+export interface AuditLogData {
+  userId?: string
+  action: AuditAction
+  resource?: string
+  resourceId?: string
+  details?: Record<string, any>
+  ipAddress?: string
+  userAgent?: string
+  severity?: AuditSeverity
+}
+
+export async function logAuditEvent(data: AuditLogData) {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId: data.userId,
+        action: data.action,
+        resource: data.resource,
+        resourceId: data.resourceId,
+        details: JSON.stringify(data.details || {}),
+        ipAddress: data.ipAddress,
+        userAgent: data.userAgent,
+        severity: data.severity || AuditSeverity.LOW,
+      }
+    })
+  } catch (error) {
+    console.error('Failed to log audit event:', error)
+    // Don't throw - audit logging shouldn't break the main flow
+  }
+}
+
+export async function getAuditLogs(options: {
+  userId?: string
+  action?: AuditAction
+  resource?: string
+  severity?: AuditSeverity
+  limit?: number
+  offset?: number
+  startDate?: Date
+  endDate?: Date
+}) {
+  const {
+    userId,
+    action,
+    resource,
+    severity,
+    limit = 50,
+    offset = 0,
+    startDate,
+    endDate
+  } = options
+
+  return await prisma.auditLog.findMany({
+    where: {
+      ...(userId && { userId }),
+      ...(action && { action }),
+      ...(resource && { resource }),
+      ...(severity && { severity }),
+      ...(startDate || endDate ? {
+        createdAt: {
+          ...(startDate && { gte: startDate }),
+          ...(endDate && { lte: endDate })
+        }
+      } : {})
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true
+        }
+      }
+    },
+    orderBy: {
+      createdAt: 'desc'
+    },
+    take: limit,
+    skip: offset
+  })
+}
+
+export async function getAuditStats(options: {
+  startDate?: Date
+  endDate?: Date
+}) {
+  const { startDate, endDate } = options
+
+  const baseWhere = startDate || endDate ? {
+    createdAt: {
+      ...(startDate && { gte: startDate }),
+      ...(endDate && { lte: endDate })
+    }
+  } : {}
+
+  const [totalEvents, eventsByAction, eventsBySeverity, recentEvents] = await Promise.all([
+    prisma.auditLog.count({ where: baseWhere }),
+
+    prisma.auditLog.groupBy({
+      by: ['action'],
+      where: baseWhere,
+      _count: true,
+      orderBy: { _count: { action: 'desc' } }
+    }),
+
+    prisma.auditLog.groupBy({
+      by: ['severity'],
+      where: baseWhere,
+      _count: true
+    }),
+
+    prisma.auditLog.findMany({
+      where: baseWhere,
+      include: {
+        user: {
+          select: { name: true, email: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    })
+  ])
+
+  return {
+    totalEvents,
+    eventsByAction,
+    eventsBySeverity,
+    recentEvents
+  }
+}
+
+// Security monitoring functions
+export async function detectSuspiciousActivity(userId: string) {
+  const recentLogs = await prisma.auditLog.findMany({
+    where: {
+      userId,
+      createdAt: {
+        gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  })
+
+  const failedLogins = recentLogs.filter(log =>
+    log.action === AuditAction.SECURITY_EVENT &&
+    log.details?.type === 'failed_login'
+  ).length
+
+  const unusualDownloads = recentLogs.filter(log =>
+    log.action === AuditAction.FILE_DOWNLOAD
+  ).length
+
+  // Flag suspicious activity
+  if (failedLogins > 5) {
+    await logAuditEvent({
+      userId,
+      action: AuditAction.SECURITY_EVENT,
+      severity: AuditSeverity.HIGH,
+      details: {
+        type: 'multiple_failed_logins',
+        count: failedLogins
+      }
+    })
+  }
+
+  if (unusualDownloads > 100) {
+    await logAuditEvent({
+      userId,
+      action: AuditAction.SECURITY_EVENT,
+      severity: AuditSeverity.MEDIUM,
+      details: {
+        type: 'unusual_download_activity',
+        count: unusualDownloads
+      }
+    })
+  }
+}

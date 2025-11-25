@@ -1,0 +1,186 @@
+{
+  "nav": {
+    "home": "Accueil",
+    "login": "Connexion",
+    "register": "S'inscrire",
+    "dashboard": "Tableau de bord",
+    "upload": "Téléverser un fichier",
+    "manager": "Gestionnaire de fichiers",
+    "viewer": "Visionneuse de fichiers",
+    "sharing": "Partage de fichiers",
+    "crychat": "CryChat",
+    "settings": "Paramètres",
+    "about": "À propos",
+    "contact": "Contact/Support",
+    "profile": "Profil",
+    "notifications": "Notifications",
+    "admin": "Tableau de bord admin",
+    "language": "Langue"
+  },
+  "common": {
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "success": "Succès",
+    "cancel": "Annuler",
+    "save": "Sauvegarder",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "view": "Voir",
+    "download": "Télécharger",
+    "upload": "Téléverser",
+    "share": "Partager",
+    "revoke": "Révoquer",
+    "password": "Mot de passe",
+    "username": "Nom d'utilisateur",
+    "email": "Email",
+    "name": "Nom",
+    "submit": "Soumettre",
+    "back": "Retour",
+    "next": "Suivant",
+    "close": "Fermer",
+    "open": "Ouvrir",
+    "search": "Rechercher",
+    "filter": "Filtrer",
+    "sort": "Trier",
+    "yes": "Oui",
+    "no": "Non",
+    "logout": "Déconnexion",
+    "help": "Aide"
+  },
+  "auth": {
+    "login": {
+      "title": "Connexion à Privora12",
+      "username": "Nom d'utilisateur",
+      "password": "Mot de passe",
+      "forgot": "Mot de passe oublié ?",
+      "submit": "Se connecter",
+      "noAccount": "Pas de compte ?",
+      "register": "S'inscrire ici"
+    },
+    "register": {
+      "title": "S'inscrire sur Privora12",
+      "username": "Nom d'utilisateur",
+      "email": "Email",
+      "password": "Mot de passe",
+      "confirmPassword": "Confirmer le mot de passe",
+      "submit": "S'inscrire",
+      "haveAccount": "Déjà un compte ?",
+      "login": "Se connecter ici"
+    },
+    "forgot": {
+      "title": "Mot de passe oublié",
+      "email": "Entrez votre email",
+      "submit": "Envoyer le lien de réinitialisation"
+    }
+  },
+  "home": {
+    "title": "Bienvenue sur Privora12",
+    "subtitle": "Partage de fichiers sécurisé & Chat chiffré",
+    "description": "Gérez vos fichiers en toute sécurité avec chiffrement de bout en bout et discutez en privé.",
+    "getStarted": "Commencer",
+    "features": {
+      "encryption": "Chiffrement de bout en bout",
+      "sharing": "Partage de fichiers sécurisé",
+      "chat": "Chat chiffré",
+      "privacy": "Confidentialité d'abord"
+    }
+  },
+  "dashboard": {
+    "title": "Tableau de bord",
+    "welcome": "Bienvenue de retour",
+    "stats": {
+      "files": "Fichiers totaux",
+      "shared": "Fichiers partagés",
+      "storage": "Stockage utilisé"
+    },
+    "recent": "Activité récente",
+    "quickActions": "Actions rapides"
+  },
+  "upload": {
+    "title": "Téléverser un fichier",
+    "select": "Sélectionner un fichier",
+    "dragDrop": "Glisser-déposer ou cliquer pour sélectionner",
+    "encrypt": "Chiffrer lors du téléversement",
+    "submit": "Téléverser"
+  },
+  "manager": {
+    "title": "Gestionnaire de fichiers",
+    "files": "Vos fichiers",
+    "folders": "Dossiers",
+    "actions": "Actions",
+    "noFiles": "Aucun fichier trouvé"
+  },
+  "viewer": {
+    "title": "Visionneuse de fichiers",
+    "download": "Télécharger",
+    "share": "Partager",
+    "close": "Fermer"
+  },
+  "sharing": {
+    "title": "Partager un fichier",
+    "link": "Lien partageable",
+    "permissions": {
+      "view": "Lecture seule",
+      "download": "Autoriser le téléchargement",
+      "password": "Protégé par mot de passe"
+    },
+    "generate": "Générer le lien",
+    "revoke": "Révoquer l'accès"
+  },
+  "crychat": {
+    "title": "CryChat",
+    "rooms": "Salles de chat",
+    "messages": "Messages",
+    "send": "Envoyer un message",
+    "online": "En ligne",
+    "offline": "Hors ligne",
+    "encrypted": "Chiffré de bout en bout"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "profile": "Paramètres de profil",
+    "theme": "Thème",
+    "language": "Langue",
+    "privacy": "Confidentialité",
+    "security": "Sécurité",
+    "themes": {
+      "light": "Clair",
+      "dark": "Sombre",
+      "auto": "Auto"
+    }
+  },
+  "about": {
+    "title": "À propos de Privora12",
+    "description": "Privora12 est un système de partage de fichiers sécurisé et de gestion de la confidentialité."
+  },
+  "contact": {
+    "title": "Contact & Support",
+    "form": {
+      "name": "Nom",
+      "email": "Email",
+      "message": "Message",
+      "submit": "Envoyer"
+    }
+  },
+  "profile": {
+    "title": "Profil",
+    "edit": "Modifier le profil",
+    "avatar": "Avatar",
+    "bio": "Bio"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "noNotifications": "Aucune nouvelle notification"
+  },
+  "admin": {
+    "title": "Tableau de bord admin",
+    "users": "Utilisateurs",
+    "logs": "Journaux d'activité",
+    "settings": "Paramètres système"
+  },
+  "404": {
+    "title": "Page non trouvée",
+    "message": "La page que vous recherchez n'existe pas.",
+    "home": "Aller à l'accueil"
+  }
+}

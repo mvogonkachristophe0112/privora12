@@ -1,0 +1,186 @@
+{
+  "nav": {
+    "home": "首页",
+    "login": "登录",
+    "register": "注册",
+    "dashboard": "仪表板",
+    "upload": "上传文件",
+    "manager": "文件管理器",
+    "viewer": "文件查看器",
+    "sharing": "文件共享",
+    "crychat": "加密聊天",
+    "settings": "设置",
+    "about": "关于",
+    "contact": "联系我们",
+    "profile": "个人资料",
+    "notifications": "通知",
+    "admin": "管理员面板",
+    "language": "语言"
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "view": "查看",
+    "download": "下载",
+    "upload": "上传",
+    "share": "分享",
+    "revoke": "撤销",
+    "password": "密码",
+    "username": "用户名",
+    "email": "邮箱",
+    "name": "姓名",
+    "submit": "提交",
+    "back": "返回",
+    "next": "下一步",
+    "close": "关闭",
+    "open": "打开",
+    "search": "搜索",
+    "filter": "筛选",
+    "sort": "排序",
+    "yes": "是",
+    "no": "否",
+    "logout": "登出",
+    "help": "帮助"
+  },
+  "auth": {
+    "login": {
+      "title": "登录到 Privora12",
+      "username": "用户名",
+      "password": "密码",
+      "forgot": "忘记密码？",
+      "submit": "登录",
+      "noAccount": "还没有账户？",
+      "register": "在此注册"
+    },
+    "register": {
+      "title": "注册 Privora12",
+      "username": "用户名",
+      "email": "邮箱",
+      "password": "密码",
+      "confirmPassword": "确认密码",
+      "submit": "注册",
+      "haveAccount": "已有账户？",
+      "login": "在此登录"
+    },
+    "forgot": {
+      "title": "忘记密码",
+      "email": "输入您的邮箱",
+      "submit": "发送重置链接"
+    }
+  },
+  "home": {
+    "title": "欢迎来到 Privora12",
+    "subtitle": "安全文件共享和加密聊天",
+    "description": "使用端到端加密安全管理您的文件，并进行私密聊天。",
+    "getStarted": "开始使用",
+    "features": {
+      "encryption": "端到端加密",
+      "sharing": "安全文件共享",
+      "chat": "加密聊天",
+      "privacy": "隐私优先"
+    }
+  },
+  "dashboard": {
+    "title": "仪表板",
+    "welcome": "欢迎回来",
+    "stats": {
+      "files": "文件总数",
+      "shared": "已共享文件",
+      "storage": "已用存储空间"
+    },
+    "recent": "最近活动",
+    "quickActions": "快捷操作"
+  },
+  "upload": {
+    "title": "上传文件",
+    "select": "选择文件",
+    "dragDrop": "拖拽或点击选择",
+    "encrypt": "上传时加密",
+    "submit": "上传"
+  },
+  "manager": {
+    "title": "文件管理器",
+    "files": "您的文件",
+    "folders": "文件夹",
+    "actions": "操作",
+    "noFiles": "未找到文件"
+  },
+  "viewer": {
+    "title": "文件查看器",
+    "download": "下载",
+    "share": "分享",
+    "close": "关闭"
+  },
+  "sharing": {
+    "title": "分享文件",
+    "link": "可分享链接",
+    "permissions": {
+      "view": "仅查看",
+      "download": "允许下载",
+      "password": "密码保护"
+    },
+    "generate": "生成链接",
+    "revoke": "撤销访问权限"
+  },
+  "crychat": {
+    "title": "加密聊天",
+    "rooms": "聊天室",
+    "messages": "消息",
+    "send": "发送消息",
+    "online": "在线",
+    "offline": "离线",
+    "encrypted": "端到端加密"
+  },
+  "settings": {
+    "title": "设置",
+    "profile": "个人资料设置",
+    "theme": "主题",
+    "language": "语言",
+    "privacy": "隐私",
+    "security": "安全",
+    "themes": {
+      "light": "浅色",
+      "dark": "深色",
+      "auto": "自动"
+    }
+  },
+  "about": {
+    "title": "关于 Privora12",
+    "description": "Privora12 是一个安全的文件共享和隐私管理系统。"
+  },
+  "contact": {
+    "title": "联系我们",
+    "form": {
+      "name": "姓名",
+      "email": "邮箱",
+      "message": "消息",
+      "submit": "发送"
+    }
+  },
+  "profile": {
+    "title": "个人资料",
+    "edit": "编辑个人资料",
+    "avatar": "头像",
+    "bio": "简介"
+  },
+  "notifications": {
+    "title": "通知",
+    "noNotifications": "没有新通知"
+  },
+  "admin": {
+    "title": "管理员面板",
+    "users": "用户",
+    "logs": "活动日志",
+    "settings": "系统设置"
+  },
+  "404": {
+    "title": "页面未找到",
+    "message": "您要查找的页面不存在。",
+    "home": "返回首页"
+  }
+}

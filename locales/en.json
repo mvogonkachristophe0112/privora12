@@ -1,0 +1,186 @@
+{
+  "nav": {
+    "home": "Home",
+    "login": "Login",
+    "register": "Register",
+    "dashboard": "Dashboard",
+    "upload": "Upload File",
+    "manager": "File Manager",
+    "viewer": "File Viewer",
+    "sharing": "File Sharing",
+    "crychat": "CryChat",
+    "settings": "Settings",
+    "about": "About",
+    "contact": "Contact/Support",
+    "profile": "Profile",
+    "notifications": "Notifications",
+    "admin": "Admin Dashboard",
+    "language": "Language"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "view": "View",
+    "download": "Download",
+    "upload": "Upload",
+    "share": "Share",
+    "revoke": "Revoke",
+    "password": "Password",
+    "username": "Username",
+    "email": "Email",
+    "name": "Name",
+    "submit": "Submit",
+    "back": "Back",
+    "next": "Next",
+    "close": "Close",
+    "open": "Open",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "yes": "Yes",
+    "no": "No",
+    "logout": "Logout",
+    "help": "Help"
+  },
+  "auth": {
+    "login": {
+      "title": "Login to Privora12",
+      "username": "Username",
+      "password": "Password",
+      "forgot": "Forgot Password?",
+      "submit": "Login",
+      "noAccount": "Don't have an account?",
+      "register": "Register here"
+    },
+    "register": {
+      "title": "Register for Privora12",
+      "username": "Username",
+      "email": "Email",
+      "password": "Password",
+      "confirmPassword": "Confirm Password",
+      "submit": "Register",
+      "haveAccount": "Already have an account?",
+      "login": "Login here"
+    },
+    "forgot": {
+      "title": "Forgot Password",
+      "email": "Enter your email",
+      "submit": "Send Reset Link"
+    }
+  },
+  "home": {
+    "title": "Welcome to Privora12",
+    "subtitle": "Secure File Sharing & Encrypted Chat",
+    "description": "Manage your files securely with end-to-end encryption and chat privately.",
+    "getStarted": "Get Started",
+    "features": {
+      "encryption": "End-to-End Encryption",
+      "sharing": "Secure File Sharing",
+      "chat": "Encrypted Chat",
+      "privacy": "Privacy First"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "welcome": "Welcome back",
+    "stats": {
+      "files": "Total Files",
+      "shared": "Shared Files",
+      "storage": "Storage Used"
+    },
+    "recent": "Recent Activity",
+    "quickActions": "Quick Actions"
+  },
+  "upload": {
+    "title": "Upload File",
+    "select": "Select File",
+    "dragDrop": "Drag and drop or click to select",
+    "encrypt": "Encrypt on Upload",
+    "submit": "Upload"
+  },
+  "manager": {
+    "title": "File Manager",
+    "files": "Your Files",
+    "folders": "Folders",
+    "actions": "Actions",
+    "noFiles": "No files found"
+  },
+  "viewer": {
+    "title": "File Viewer",
+    "download": "Download",
+    "share": "Share",
+    "close": "Close"
+  },
+  "sharing": {
+    "title": "Share File",
+    "link": "Shareable Link",
+    "permissions": {
+      "view": "View Only",
+      "download": "Allow Download",
+      "password": "Password Protected"
+    },
+    "generate": "Generate Link",
+    "revoke": "Revoke Access"
+  },
+  "crychat": {
+    "title": "CryChat",
+    "rooms": "Chat Rooms",
+    "messages": "Messages",
+    "send": "Send Message",
+    "online": "Online",
+    "offline": "Offline",
+    "encrypted": "End-to-End Encrypted"
+  },
+  "settings": {
+    "title": "Settings",
+    "profile": "Profile Settings",
+    "theme": "Theme",
+    "language": "Language",
+    "privacy": "Privacy",
+    "security": "Security",
+    "themes": {
+      "light": "Light",
+      "dark": "Dark",
+      "auto": "Auto"
+    }
+  },
+  "about": {
+    "title": "About Privora12",
+    "description": "Privora12 is a secure file-sharing and privacy management system."
+  },
+  "contact": {
+    "title": "Contact & Support",
+    "form": {
+      "name": "Name",
+      "email": "Email",
+      "message": "Message",
+      "submit": "Send"
+    }
+  },
+  "profile": {
+    "title": "Profile",
+    "edit": "Edit Profile",
+    "avatar": "Avatar",
+    "bio": "Bio"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "noNotifications": "No new notifications"
+  },
+  "admin": {
+    "title": "Admin Dashboard",
+    "users": "Users",
+    "logs": "Activity Logs",
+    "settings": "System Settings"
+  },
+  "404": {
+    "title": "Page Not Found",
+    "message": "The page you are looking for does not exist.",
+    "home": "Go Home"
+  }
+}
