@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for Docker deployment
-  output: 'standalone',
+  // Output for Netlify deployment (remove standalone for serverless)
+  // output: 'standalone',
 
   // Performance optimizations
   poweredByHeader: false,
