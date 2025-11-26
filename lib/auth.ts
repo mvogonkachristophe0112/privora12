@@ -68,5 +68,5 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
   }
 }
 
-// For backward compatibility
-export const authOptions = await getAuthOptions()
+// Note: Removed synchronous authOptions export to prevent build-time Prisma initialization
+// All API routes now use the async getAuthOptions() function
