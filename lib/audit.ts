@@ -1,4 +1,4 @@
-import { prisma } from './prisma'
+import { getPrismaClient } from './prisma'
 
 export enum AuditAction {
   USER_LOGIN = 'USER_LOGIN',
@@ -37,6 +37,7 @@ export interface AuditLogData {
 
 export async function logAuditEvent(data: AuditLogData) {
   try {
+    const prisma = await getPrismaClient()
     await prisma.auditLog.create({
       data: {
         userId: data.userId,
@@ -76,6 +77,7 @@ export async function getAuditLogs(options: {
     endDate
   } = options
 
+  const prisma = await getPrismaClient()
   return await prisma.auditLog.findMany({
     where: {
       ...(userId && { userId }),
@@ -119,6 +121,7 @@ export async function getAuditStats(options: {
     }
   } : {}
 
+  const prisma = await getPrismaClient()
   const [totalEvents, eventsByAction, eventsBySeverity, recentEvents] = await Promise.all([
     prisma.auditLog.count({ where: baseWhere }),
 
@@ -170,6 +173,7 @@ function parseDetails(details: unknown): any | undefined {
 }
 
 export async function detectSuspiciousActivity(userId: string) {
+  const prisma = await getPrismaClient()
   const recentLogs = await prisma.auditLog.findMany({
     where: {
       userId,
@@ -180,14 +184,14 @@ export async function detectSuspiciousActivity(userId: string) {
     orderBy: { createdAt: 'desc' }
   })
 
-  const failedLogins = recentLogs.filter(log => {
+  const failedLogins = recentLogs.filter((log: any) => {
     if (log.action !== AuditAction.SECURITY_EVENT) return false;
     if (typeof log.details !== 'object' || log.details === null) return false;
     const details = log.details as Record<string, unknown>;
     return details.type === 'failed_login';
   }).length
 
-  const unusualDownloads = recentLogs.filter(log =>
+  const unusualDownloads = recentLogs.filter((log: any) =>
     log.action === AuditAction.FILE_DOWNLOAD
   ).length
 
