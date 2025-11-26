@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Output for Netlify deployment (remove standalone for serverless)
-  // output: 'standalone',
+  // Output for Netlify deployment - static export
+  output: 'export',
+  trailingSlash: true,
 
   // Performance optimizations
   poweredByHeader: false,
