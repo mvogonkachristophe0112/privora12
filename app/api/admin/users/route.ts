@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import { getAuthOptions } from '@/lib/auth'
+import { getPrismaClient } from '@/lib/prisma'
 import { logAuditEvent, AuditAction, AuditSeverity } from '@/lib/audit'
 
 export async function GET() {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
 
     if (!session || session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
+    const prisma = await getPrismaClient()
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -46,12 +48,14 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
 
     if (!session || session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
+    const prisma = await getPrismaClient()
     const { userId, role } = await request.json()
 
     if (!userId || !role) {

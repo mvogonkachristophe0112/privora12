@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
+import { getAuthOptions } from "@/lib/auth"
+import { getPrismaClient } from "@/lib/prisma"
 
 export async function GET() {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const prisma = await getPrismaClient()
     const files = await prisma.file.findMany({
       where: { userId: session.user.id },
       orderBy: { createdAt: 'desc' }
@@ -23,11 +25,13 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const prisma = await getPrismaClient()
     const formData = await request.formData()
     const file = formData.get('file') as File
 

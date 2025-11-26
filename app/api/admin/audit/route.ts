@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import { getAuthOptions } from '@/lib/auth'
+import { getPrismaClient } from '@/lib/prisma'
 import { logAuditEvent, AuditAction, AuditSeverity } from '@/lib/audit'
 
 export async function GET(request: NextRequest) {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
 
     if (!session || session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
+    const prisma = await getPrismaClient()
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
@@ -63,6 +65,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
 
     if (!session || session.user.role !== 'admin') {

@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
+import { getAuthOptions } from "@/lib/auth"
+import { getPrismaClient } from "@/lib/prisma"
 
 export async function GET(request: NextRequest) {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const prisma = await getPrismaClient()
     const { searchParams } = new URL(request.url)
     const roomId = searchParams.get('roomId')
 
@@ -48,11 +50,13 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const prisma = await getPrismaClient()
     const { content, roomId } = await request.json()
 
     if (!content || !roomId) {
