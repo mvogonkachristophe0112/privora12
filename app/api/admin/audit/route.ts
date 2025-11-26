@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     })
 
     // Parse JSON details
-    const logsWithParsedDetails = auditLogs.map(log => ({
+    const logsWithParsedDetails = auditLogs.map((log: any) => ({
       ...log,
       details: log.details ? JSON.parse(log.details) : {}
     }))
