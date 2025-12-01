@@ -26,73 +26,139 @@ export const initSocket = (httpServer: NetServer) => {
   io.on('connection', (socket) => {
     console.log('User connected:', socket.id)
 
-    socket.on('user-online', async (userId: string) => {
+    socket.on('user-online', async (data: { userId: string; deviceType: string; user: any }) => {
       try {
         const prisma = await getPrismaClient()
 
         // Update user presence in database
         await prisma.userPresence.upsert({
-          where: { userId },
+          where: { userId: data.userId },
           update: {
             isOnline: true,
             lastSeen: new Date(),
             socketId: socket.id,
+            deviceType: data.deviceType,
           },
           create: {
-            userId,
+            userId: data.userId,
             isOnline: true,
             socketId: socket.id,
+            deviceType: data.deviceType,
           },
         })
 
         // Store in memory
-        onlineUsers.set(userId, socket.id)
+        onlineUsers.set(data.userId, socket.id)
 
-        // Broadcast user online status
+        // Broadcast user online status with device info
+        socket.broadcast.emit('user-status-changed', {
+          userId: data.userId,
+          isOnline: true,
+          lastSeen: new Date(),
+          deviceType: data.deviceType,
+          user: data.user,
+        })
+
+        console.log(`User ${data.userId} is now online from ${data.deviceType}`)
+      } catch (error) {
+        console.error('Error setting user online:', error)
+      }
+    })
+
+    socket.on('user-offline', async (data: { userId: string; deviceType: string; lastSeen: Date }) => {
+      try {
+        const prisma = await getPrismaClient()
+
+        // Update user presence in database
+        await prisma.userPresence.upsert({
+          where: { userId: data.userId },
+          update: {
+            isOnline: false,
+            lastSeen: data.lastSeen,
+            socketId: null,
+            deviceType: data.deviceType,
+          },
+          create: {
+            userId: data.userId,
+            isOnline: false,
+            lastSeen: data.lastSeen,
+            socketId: null,
+            deviceType: data.deviceType,
+          },
+        })
+
+        // Remove from memory
+        onlineUsers.delete(data.userId)
+
+        // Broadcast user offline status
+        socket.broadcast.emit('user-status-changed', {
+          userId: data.userId,
+          isOnline: false,
+          lastSeen: data.lastSeen,
+          deviceType: data.deviceType,
+        })
+
+        console.log(`User ${data.userId} is now offline from ${data.deviceType}`)
+      } catch (error) {
+        console.error('Error setting user offline:', error)
+      }
+    })
+
+    // Handle user activity updates
+    socket.on('user-active', async (userId: string) => {
+      try {
+        const prisma = await getPrismaClient()
+
+        // Update last seen time to show user is active
+        await prisma.userPresence.upsert({
+          where: { userId },
+          update: {
+            lastSeen: new Date(),
+          },
+          create: {
+            userId,
+            isOnline: true,
+            lastSeen: new Date(),
+            socketId: socket.id,
+          },
+        })
+
+        // Broadcast user active status (still online)
         socket.broadcast.emit('user-status-changed', {
           userId,
           isOnline: true,
           lastSeen: new Date(),
         })
 
-        console.log(`User ${userId} is now online`)
+        console.log(`User ${userId} is active`)
       } catch (error) {
-        console.error('Error setting user online:', error)
+        console.error('Error updating user activity:', error)
       }
     })
 
-    socket.on('user-offline', async (userId: string) => {
+    socket.on('user-away', async (userId: string) => {
       try {
         const prisma = await getPrismaClient()
 
-        // Update user presence in database
+        // Update last seen time but keep online status
         await prisma.userPresence.upsert({
           where: { userId },
           update: {
-            isOnline: false,
             lastSeen: new Date(),
-            socketId: null,
           },
           create: {
             userId,
-            isOnline: false,
-            socketId: null,
+            isOnline: true,
+            lastSeen: new Date(),
+            socketId: socket.id,
           },
         })
 
-        // Remove from memory
-        onlineUsers.delete(userId)
-
-        // Broadcast user offline status
-        socket.broadcast.emit('user-status-changed', {
-          userId,
-          isOnline: false,
-          lastSeen: new Date(),
-        })
-
-        console.log(`User ${userId} is now offline`)
+        // For now, keep them online but update last seen
+        // In a more advanced implementation, you could show "away" status
+        console.log(`User ${userId} is away`)
       } catch (error) {
-        console.error('Error setting user offline:', error)
+        console.error('Error updating user away status:', error)
       }
     })
 
@@ -104,6 +170,12 @@ export const initSocket = (httpServer: NetServer) => {
         if (socketId === socket.id) {
           try {
             const prisma = await getPrismaClient()
+
+            // Get current presence to preserve device type
+            const currentPresence = await prisma.userPresence.findUnique({
+              where: { userId },
+            })
+
             await prisma.userPresence.upsert({
               where: { userId },
               update: {
@@ -114,7 +186,9 @@ export const initSocket = (httpServer: NetServer) => {
               create: {
                 userId,
                 isOnline: false,
+                lastSeen: new Date(),
                 socketId: null,
+                deviceType: currentPresence?.deviceType || 'desktop',
               },
             })
 
@@ -125,6 +199,7 @@ export const initSocket = (httpServer: NetServer) => {
               userId,
               isOnline: false,
               lastSeen: new Date(),
+              deviceType: currentPresence?.deviceType || 'desktop',
             })
 
             console.log(`User ${userId} disconnected and marked offline`)

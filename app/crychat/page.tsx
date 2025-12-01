@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useSession } from "next-auth/react"
+import { usePresence, useUserPresence } from "@/lib/presence-context"
 
 interface Message {
   id: string
@@ -26,16 +27,17 @@ interface User {
 
 export default function CrypChat() {
   const { data: session, status } = useSession()
+  const { userPresence, isConnected: presenceConnected } = usePresence()
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
   const [roomId, setRoomId] = useState("general")
-  const [onlineUsers, setOnlineUsers] = useState<User[]>([])
+  const [allUsers, setAllUsers] = useState<User[]>([])
   const [isTyping, setIsTyping] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting')
+  const connectionStatus = presenceConnected ? 'connected' : 'connecting'
   const [activeUsers, setActiveUsers] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -47,19 +49,14 @@ export default function CrypChat() {
       try {
         setIsLoading(true)
         setError(null)
-        setConnectionStatus('connecting')
 
         await Promise.all([
           fetchMessages(),
-          fetchOnlineUsers()
+          fetchAllUsers()
         ])
-
-        // Simulate connection establishment
-        setTimeout(() => setConnectionStatus('connected'), 500)
       } catch (err) {
         console.error('Failed to initialize chat:', err)
         setError('Failed to load chat. Please refresh the page.')
-        setConnectionStatus('disconnected')
       } finally {
         setIsLoading(false)
       }
@@ -79,10 +76,11 @@ export default function CrypChat() {
     scrollToBottom()
   }, [messages])
 
-  // Update active users count
+  // Update active users count from presence data
   useEffect(() => {
-    setActiveUsers(onlineUsers.filter(u => u.isOnline).length)
-  }, [onlineUsers])
+    const onlineCount = Object.values(userPresence).filter(presence => presence.isOnline).length
+    setActiveUsers(onlineCount)
+  }, [userPresence])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -113,24 +111,16 @@ export default function CrypChat() {
     }
   }
 
-  const fetchOnlineUsers = async () => {
-    // Mock online users - in real app, this would come from API
-    // Simulate scalability with more users
-    const mockUsers: User[] = [
-      { id: "1", name: "Alice Johnson", email: "alice@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "2", name: "Bob Smith", email: "bob@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "3", name: "Carol Davis", email: "carol@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "4", name: "David Wilson", email: "david@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "5", name: "Emma Brown", email: "emma@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "6", name: "Frank Miller", email: "frank@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "7", name: "Grace Lee", email: "grace@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "8", name: "Henry Taylor", email: "henry@example.com", isOnline: false, lastSeen: new Date(Date.now() - 300000).toISOString() },
-      { id: "9", name: "Ivy Chen", email: "ivy@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "10", name: "Jack Anderson", email: "jack@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "11", name: "Kate Martinez", email: "kate@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "12", name: "Liam Garcia", email: "liam@example.com", isOnline: false, lastSeen: new Date(Date.now() - 600000).toISOString() }
-    ]
-    setOnlineUsers(mockUsers)
+  const fetchAllUsers = async () => {
+    try {
+      const response = await fetch('/api/users')
+      if (response.ok) {
+        const usersData = await response.json()
+        setAllUsers(usersData)
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error)
+    }
   }
 
   const sendMessage = async () => {
@@ -385,22 +375,87 @@ export default function CrypChat() {
 
           {/* Online Users */}
           <div className="mt-6">
-            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-3 uppercase tracking-wide">Online Users</h3>
-            <div className="space-y-2">
-              {onlineUsers.filter(user => user.isOnline).map((user) => (
-                <div key={user.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
-                  <div className="relative">
-                    <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-green-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                      {user.name.charAt(0)}
+            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-3 uppercase tracking-wide">
+              Online Users ({activeUsers})
+            </h3>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {Object.entries(userPresence)
+                .filter(([email, presence]) => presence.isOnline)
+                .map(([email, presence]) => {
+                  const user = allUsers.find(u => u.email === email)
+                  if (!user) return null
+
+                  return (
+                    <div key={email} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <div className="relative">
+                        <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-green-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                          {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full animate-pulse"></div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-sm font-medium truncate">
+                            {user.name || user.email.split('@')[0]}
+                          </p>
+                          <span className="text-xs">
+                            {presence.deviceType === 'phone' && '📱'}
+                            {presence.deviceType === 'laptop' && '💻'}
+                            {presence.deviceType === 'tablet' && '📱'}
+                            {presence.deviceType === 'desktop' && '🖥️'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-green-600 dark:text-green-400 font-medium">Online now</p>
+                      </div>
                     </div>
-                    <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full"></div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{user.name}</p>
-                    <p className="text-xs text-gray-500">Online</p>
-                  </div>
+                  )
+                })}
+              {activeUsers === 0 && (
+                <div className="text-center py-4 text-gray-500 dark:text-gray-400">
+                  <p className="text-sm">No users online</p>
+                  <p className="text-xs mt-1">Users will appear here when they sign in</p>
                 </div>
-              ))}
+              )}
+            </div>
+
+            {/* All Users (Online & Offline) */}
+            <div className="mt-4">
+              <h4 className="text-xs font-semibold text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wide">
+                All Users ({allUsers.length})
+              </h4>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {allUsers.map((user) => {
+                  const presence = userPresence[user.email]
+                  const status = useUserPresence(user.email)
+
+                  return (
+                    <div key={user.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                      <div className="relative">
+                        <div className="w-6 h-6 bg-gradient-to-r from-gray-400 to-gray-600 rounded-full flex items-center justify-center text-white text-xs font-medium">
+                          {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-white dark:border-gray-800 ${status.dotColor}`}></div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1 mb-0.5">
+                          <p className="text-xs font-medium truncate">
+                            {user.name || user.email.split('@')[0]}
+                          </p>
+                          {presence?.deviceType && (
+                            <span className="text-xs">
+                              {presence.deviceType === 'phone' && '📱'}
+                              {presence.deviceType === 'laptop' && '💻'}
+                              {presence.deviceType === 'tablet' && '📱'}
+                              {presence.deviceType === 'desktop' && '🖥️'}
+                            </span>
+                          )}
+                        </div>
+                        <p className={`text-xs ${status.color}`}>{status.text}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
         </div>

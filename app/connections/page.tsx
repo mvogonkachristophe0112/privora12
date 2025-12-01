@@ -461,16 +461,24 @@ export default function Connections() {
                       <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800 ${getUserStatus(user.email).dotColor}`}></div>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-semibold text-base md:text-lg truncate">
                           {user.name || user.email.split('@')[0]}
                         </h3>
-                        <span className={`text-xs px-2 py-1 rounded-full ${getUserStatus(user.email).color} bg-gray-100 dark:bg-gray-700`}>
-                          {getUserStatus(user.email).text}
+                        {/* Device indicator */}
+                        <span className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                          {getUserStatus(user.email).deviceType === 'phone' && '📱'}
+                          {getUserStatus(user.email).deviceType === 'laptop' && '💻'}
+                          {getUserStatus(user.email).deviceType === 'tablet' && '📱'}
+                          {getUserStatus(user.email).deviceType === 'desktop' && '🖥️'}
+                          {getUserStatus(user.email).deviceType}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate mb-1">
                         {user.email}
+                      </p>
+                      <p className={`text-xs ${getUserStatus(user.email).color}`}>
+                        {getUserStatus(user.email).text}
                       </p>
                     </div>
                   </div>

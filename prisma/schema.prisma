@@ -119,14 +119,15 @@ model Message {
 }
 
 model UserPresence {
-  id        String   @id @default(cuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  isOnline  Boolean  @default(false)
-  lastSeen  DateTime @default(now())
-  socketId  String?  // Socket.io socket ID
-  userAgent String?
-  ipAddress String?
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isOnline   Boolean  @default(false)
+  lastSeen   DateTime @default(now())
+  socketId   String?  // Socket.io socket ID
+  deviceType String   @default("desktop") // "phone", "laptop", "tablet", "desktop"
+  userAgent  String?
+  ipAddress  String?
 
   @@index([userId])
   @@index([isOnline])

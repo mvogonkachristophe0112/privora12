@@ -4,13 +4,46 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { useSession } from 'next-auth/react'
 import { io, Socket } from 'socket.io-client'
 
+// Device detection utility
+function detectDeviceType(): 'phone' | 'laptop' | 'tablet' | 'desktop' {
+  if (typeof window === 'undefined') return 'desktop'
+
+  const userAgent = navigator.userAgent.toLowerCase()
+  const screenWidth = window.screen.width
+  const screenHeight = window.screen.height
+
+  // Check for mobile devices
+  if (/android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent)) {
+    // Distinguish between phone and tablet
+    if (screenWidth <= 768 && screenHeight <= 1024) {
+      return 'phone'
+    } else {
+      return 'tablet'
+    }
+  }
+
+  // Check for touch capability (likely tablet or 2-in-1 laptop)
+  if ('ontouchstart' in window && screenWidth >= 768) {
+    return 'tablet'
+  }
+
+  // Check screen size for laptop vs desktop
+  if (screenWidth < 1366) {
+    return 'laptop'
+  }
+
+  return 'desktop'
+}
+
 interface UserPresence {
   isOnline: boolean
   lastSeen: Date
+  deviceType: 'phone' | 'laptop' | 'tablet' | 'desktop'
   user: {
     id: string
     name: string | null
     email: string
+    image?: string | null
   }
 }
 
@@ -27,15 +60,66 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({})
   const [socket, setSocket] = useState<Socket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [deviceType, setDeviceType] = useState<'phone' | 'laptop' | 'tablet' | 'desktop'>('desktop')
+  const [lastActivity, setLastActivity] = useState<Date>(new Date())
+  const [heartbeatInterval, setHeartbeatInterval] = useState<NodeJS.Timeout | null>(null)
+
+  // Initialize device type detection
+  useEffect(() => {
+    setDeviceType(detectDeviceType())
+  }, [])
+
+  // Activity tracking for automatic offline detection
+  useEffect(() => {
+    const updateActivity = () => {
+      setLastActivity(new Date())
+    }
+
+    // Track user activity
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click']
+    events.forEach(event => {
+      document.addEventListener(event, updateActivity, true)
+    })
+
+    // Heartbeat to keep user online
+    const heartbeat = setInterval(() => {
+      const now = new Date()
+      const timeSinceActivity = now.getTime() - lastActivity.getTime()
+
+      // If inactive for more than 30 seconds, mark as away/offline
+      if (timeSinceActivity > 30000 && socket && session?.user?.id) {
+        socket.emit('user-away', session.user.id)
+      } else if (timeSinceActivity <= 30000 && socket && session?.user?.id) {
+        socket.emit('user-active', session.user.id)
+      }
+    }, 10000) // Check every 10 seconds
+
+    setHeartbeatInterval(heartbeat)
+
+    return () => {
+      events.forEach(event => {
+        document.removeEventListener(event, updateActivity, true)
+      })
+      if (heartbeat) clearInterval(heartbeat)
+    }
+  }, [lastActivity, socket, session])
 
   useEffect(() => {
     if (status !== 'authenticated' || !session?.user?.id) {
       // Clean up socket connection when user logs out
       if (socket) {
-        socket.emit('user-offline', session?.user?.id)
+        socket.emit('user-offline', {
+          userId: session?.user?.id,
+          deviceType,
+          lastSeen: new Date()
+        })
         socket.disconnect()
         setSocket(null)
         setIsConnected(false)
+      }
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval)
+        setHeartbeatInterval(null)
       }
       return
     }
@@ -49,7 +133,16 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       console.log('Presence: Connected to Socket.io server')
       setIsConnected(true)
       // Mark user as online when socket connects
-      socketConnection.emit('user-online', session.user.id)
+      socketConnection.emit('user-online', {
+        userId: session.user.id,
+        deviceType,
+        user: {
+          id: session.user.id,
+          name: session.user.name,
+          email: session.user.email,
+          image: session.user.image
+        }
+      })
     })
 
     socketConnection.on('disconnect', () => {
@@ -63,7 +156,13 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
         [data.userId]: {
           isOnline: data.isOnline,
           lastSeen: new Date(data.lastSeen),
-          user: prev[data.userId]?.user || { id: data.userId, name: null, email: data.userId },
+          deviceType: data.deviceType || 'desktop',
+          user: {
+            id: data.userId,
+            name: data.user?.name || null,
+            email: data.user?.email || data.userId,
+            image: data.user?.image || null
+          },
         },
       }))
     })
@@ -82,12 +181,20 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
 
     // Cleanup on unmount or session change
     return () => {
-      socketConnection.emit('user-offline', session.user.id)
+      socketConnection.emit('user-offline', {
+        userId: session.user.id,
+        deviceType,
+        lastSeen: new Date()
+      })
       socketConnection.disconnect()
       setSocket(null)
       setIsConnected(false)
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval)
+        setHeartbeatInterval(null)
+      }
     }
-  }, [session, status])
+  }, [session, status, deviceType, heartbeatInterval])
 
   // Fetch initial presence data
   useEffect(() => {
@@ -135,19 +242,67 @@ export function useUserPresence(email: string) {
 
   const presence = userPresence[email]
   if (presence?.isOnline) {
-    return { status: 'online', text: 'Online', color: 'text-green-600', dotColor: 'bg-green-500' }
+    return {
+      status: 'online',
+      text: 'Online',
+      color: 'text-green-600',
+      dotColor: 'bg-green-500',
+      deviceType: presence.deviceType,
+      lastSeen: presence.lastSeen
+    }
   } else if (presence) {
     const lastSeen = new Date(presence.lastSeen)
     const now = new Date()
     const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
 
-    if (diffMinutes < 1) return { status: 'away', text: 'Just now', color: 'text-gray-500', dotColor: 'bg-gray-400' }
-    if (diffMinutes < 60) return { status: 'away', text: `${diffMinutes}m ago`, color: 'text-gray-500', dotColor: 'bg-gray-400' }
+    if (diffMinutes < 1) {
+      return {
+        status: 'away',
+        text: 'Last seen just now',
+        color: 'text-gray-500',
+        dotColor: 'bg-gray-400',
+        deviceType: presence.deviceType,
+        lastSeen: presence.lastSeen
+      }
+    }
+    if (diffMinutes < 60) {
+      return {
+        status: 'away',
+        text: `Last seen ${diffMinutes}m ago`,
+        color: 'text-gray-500',
+        dotColor: 'bg-gray-400',
+        deviceType: presence.deviceType,
+        lastSeen: presence.lastSeen
+      }
+    }
 
     const diffHours = Math.floor(diffMinutes / 60)
-    if (diffHours < 24) return { status: 'away', text: `${diffHours}h ago`, color: 'text-gray-500', dotColor: 'bg-gray-400' }
+    if (diffHours < 24) {
+      return {
+        status: 'away',
+        text: `Last seen ${diffHours}h ago`,
+        color: 'text-gray-500',
+        dotColor: 'bg-gray-400',
+        deviceType: presence.deviceType,
+        lastSeen: presence.lastSeen
+      }
+    }
 
-    return { status: 'offline', text: lastSeen.toLocaleDateString(), color: 'text-gray-400', dotColor: 'bg-gray-300' }
+    return {
+      status: 'offline',
+      text: `Last seen ${lastSeen.toLocaleDateString()}`,
+      color: 'text-gray-400',
+      dotColor: 'bg-gray-300',
+      deviceType: presence.deviceType,
+      lastSeen: presence.lastSeen
+    }
   }
-  return { status: 'offline', text: 'Offline', color: 'text-gray-400', dotColor: 'bg-gray-300' }
+  return {
+    status: 'offline',
+    text: 'Offline',
+    color: 'text-gray-400',
+    dotColor: 'bg-gray-300',
+    deviceType: 'desktop' as const,
+    lastSeen: new Date()
+  }
 }
