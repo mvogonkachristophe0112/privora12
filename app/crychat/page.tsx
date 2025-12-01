@@ -25,7 +25,7 @@ interface User {
 }
 
 export default function CrypChat() {
-  const { data: session } = useSession()
+  const { data: session, status } = useSession()
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
   const [roomId, setRoomId] = useState("general")
@@ -37,17 +37,35 @@ export default function CrypChat() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting')
   const [activeUsers, setActiveUsers] = useState<number>(0)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    // Initialize connection
-    setConnectionStatus('connecting')
-    fetchMessages()
-    fetchOnlineUsers()
+    const initializeChat = async () => {
+      try {
+        setIsLoading(true)
+        setError(null)
+        setConnectionStatus('connecting')
 
-    // Simulate connection establishment
-    setTimeout(() => setConnectionStatus('connected'), 1000)
+        await Promise.all([
+          fetchMessages(),
+          fetchOnlineUsers()
+        ])
+
+        // Simulate connection establishment
+        setTimeout(() => setConnectionStatus('connected'), 500)
+      } catch (err) {
+        console.error('Failed to initialize chat:', err)
+        setError('Failed to load chat. Please refresh the page.')
+        setConnectionStatus('disconnected')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    initializeChat()
 
     // Cleanup on unmount
     return () => {
@@ -75,10 +93,23 @@ export default function CrypChat() {
       const res = await fetch(`/api/messages?roomId=${roomId}`)
       if (res.ok) {
         const data = await res.json()
-        setMessages(data)
+        // Handle new API response format with pagination
+        if (data.messages && Array.isArray(data.messages)) {
+          setMessages(data.messages)
+        } else if (Array.isArray(data)) {
+          // Fallback for old format
+          setMessages(data)
+        } else {
+          console.error("Invalid messages response format")
+          setMessages([])
+        }
+      } else {
+        console.error("Failed to fetch messages:", res.status)
+        setMessages([])
       }
     } catch (error) {
-      console.error("Failed to fetch messages")
+      console.error("Failed to fetch messages:", error)
+      setMessages([])
     }
   }
 
@@ -103,13 +134,16 @@ export default function CrypChat() {
   }
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !session) return
+    if (!newMessage.trim() || !session?.user) return
 
     // Add message to UI immediately with sending status
     const tempMessage: Message = {
       id: Date.now().toString(),
       content: newMessage,
-      user: { name: session.user.name, email: session.user.email },
+      user: {
+        name: session.user.name || 'Unknown User',
+        email: session.user.email || ''
+      },
       createdAt: new Date().toISOString(),
       status: 'sending',
       replyTo: replyTo?.id
@@ -153,16 +187,19 @@ export default function CrypChat() {
   }
 
   const addReaction = (messageId: string, emoji: string) => {
+    if (!session?.user?.email) return
+
     setMessages(prev => prev.map(msg => {
       if (msg.id === messageId) {
         const reactions = msg.reactions || {}
         const users = reactions[emoji] || []
-        if (users.includes(session?.user?.email || '')) {
+        const userEmail = session.user.email
+        if (users.includes(userEmail)) {
           // Remove reaction
-          reactions[emoji] = users.filter(email => email !== session?.user?.email)
+          reactions[emoji] = users.filter(email => email !== userEmail)
         } else {
           // Add reaction
-          reactions[emoji] = [...users, session?.user?.email || '']
+          reactions[emoji] = [...users, userEmail]
         }
         return { ...msg, reactions }
       }
@@ -175,15 +212,70 @@ export default function CrypChat() {
   }
 
 
-  const filteredMessages = messages.filter(msg =>
-    msg.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    msg.user.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredMessages = (messages || []).filter(msg =>
+    msg.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    msg.user?.name?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   const emojis = ['👍', '❤️', '😂', '😮', '😢', '😡']
 
+  // Loading state
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
+          <p>Loading CrypChat...</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!session) {
-    return <div className="min-h-screen flex items-center justify-center">Please login to access chat</div>
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center p-8">
+          <h2 className="text-2xl font-bold mb-4">Access Required</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">Please login to access CrypChat</p>
+          <a
+            href="/login"
+            className="bg-primary-500 hover:bg-primary-600 text-white px-6 py-3 rounded-lg transition-colors"
+          >
+            Login
+          </a>
+        </div>
+      </div>
+    )
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center p-8">
+          <h2 className="text-2xl font-bold mb-4 text-red-600">Connection Error</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-primary-500 hover:bg-primary-600 text-white px-6 py-3 rounded-lg transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading chat state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
+          <p>Connecting to CrypChat...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -369,19 +461,21 @@ export default function CrypChat() {
         <div className="flex-1 p-4 overflow-y-auto">
           <div className="space-y-4">
             {filteredMessages.map((msg) => {
+              if (!msg || !msg.user) return null
+
               const isOwnMessage = msg.user.email === session?.user?.email
-              const replyMessage = msg.replyTo ? messages.find(m => m.id === msg.replyTo) : null
+              const replyMessage = msg.replyTo ? (messages || []).find(m => m.id === msg.replyTo) : null
 
               return (
-                <div key={msg.id} className={`flex ${isOwnMessage ? "justify-end" : "justify-start"} group`}>
+                <div key={msg.id || Math.random()} className={`flex ${isOwnMessage ? "justify-end" : "justify-start"} group`}>
                   <div className={`max-w-xs lg:max-w-md ${isOwnMessage ? "order-2" : "order-1"}`}>
                     {/* Reply indicator */}
-                    {replyMessage && (
+                    {replyMessage && replyMessage.user && (
                       <div className={`mb-2 p-2 rounded border-l-4 ${
                         isOwnMessage ? "border-primary-500 bg-primary-50 dark:bg-primary-900/20" : "border-gray-300 bg-gray-50 dark:bg-gray-700"
                       }`}>
-                        <p className="text-xs text-gray-500">Replying to {replyMessage.user.name}</p>
-                        <p className="text-sm truncate">{replyMessage.content}</p>
+                        <p className="text-xs text-gray-500">Replying to {replyMessage.user.name || 'Unknown'}</p>
+                        <p className="text-sm truncate">{replyMessage.content || ''}</p>
                       </div>
                     )}
 
@@ -393,7 +487,7 @@ export default function CrypChat() {
                     }`}>
                       {!isOwnMessage && (
                         <p className="font-medium text-sm mb-1 text-primary-600 dark:text-primary-400">
-                          {msg.user.name}
+                          {msg.user.name || 'Unknown User'}
                         </p>
                       )}
 
@@ -413,7 +507,7 @@ export default function CrypChat() {
                       {/* Message status */}
                       <div className="flex items-center justify-between mt-2">
                         <p className={`text-xs ${isOwnMessage ? "text-primary-100" : "text-gray-500"}`}>
-                          {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                         </p>
                         {isOwnMessage && (
                           <div className="flex items-center gap-1">
@@ -429,7 +523,7 @@ export default function CrypChat() {
                       {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {Object.entries(msg.reactions).map(([emoji, users]) => (
-                            users.length > 0 && (
+                            Array.isArray(users) && users.length > 0 && (
                               <span key={emoji} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-600 rounded-full text-xs">
                                 {emoji} {users.length}
                               </span>
