@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
+import { io, Socket } from 'socket.io-client'
 
 interface User {
   id: string
@@ -15,37 +16,140 @@ interface User {
   }
 }
 
+interface UserPresence {
+  isOnline: boolean
+  lastSeen: Date
+  user: User
+}
+
+interface Connection {
+  id: string
+  userId: string
+  connectedTo: string
+  status: string
+  user: User
+}
+
 export default function Connections() {
   const { data: session } = useSession()
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
   const [actionMode, setActionMode] = useState<"send" | "receive" | null>(null)
+  const [socket, setSocket] = useState<Socket | null>(null)
+  const [connectionRequests, setConnectionRequests] = useState<Connection[]>([])
+
+  const fetchConnections = async () => {
+    if (!session) return
+
+    try {
+      const response = await fetch('/api/connections')
+      if (response.ok) {
+        const connectionsData = await response.json()
+        setConnections(connectionsData)
+
+        const pendingRequests = connectionsData.filter((conn: Connection) =>
+          conn.status === 'pending' && conn.connectedTo === session.user.email
+        )
+        setConnectionRequests(pendingRequests)
+      }
+    } catch (error) {
+      console.error('Error fetching connections:', error)
+    }
+  }
 
   useEffect(() => {
-    const fetchUsers = async () => {
+    if (!session?.user?.id) return
+
+    // Initialize Socket.io connection
+    const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
+      path: '/api/socket',
+    })
+
+    socketConnection.on('connect', () => {
+      console.log('Connected to Socket.io server')
+      // Mark user as online
+      socketConnection.emit('user-online', session.user.id)
+    })
+
+    socketConnection.on('user-status-changed', (data) => {
+      setUserPresence(prev => ({
+        ...prev,
+        [data.userId]: {
+          isOnline: data.isOnline,
+          lastSeen: new Date(data.lastSeen),
+          user: prev[data.userId]?.user,
+        },
+      }))
+    })
+
+    socketConnection.on('connection-request', (data) => {
+      // Refresh connections when a new request comes in
+      fetchConnections()
+    })
+
+    socketConnection.on('connection-accepted', (data) => {
+      // Refresh connections when a request is accepted
+      fetchConnections()
+    })
+
+    setSocket(socketConnection)
+
+    // Cleanup on unmount
+    return () => {
+      socketConnection.emit('user-offline', session.user.id)
+      socketConnection.disconnect()
+    }
+  }, [session])
+
+  useEffect(() => {
+    const fetchData = async () => {
       if (!session) return
 
       try {
         setLoading(true)
         setError(null)
-        const response = await fetch('/api/users')
-        if (!response.ok) {
-          throw new Error('Failed to fetch users')
+
+        // Fetch users, presence, and connections in parallel
+        const [usersResponse, presenceResponse, connectionsResponse] = await Promise.all([
+          fetch('/api/users'),
+          fetch('/api/presence'),
+          fetch('/api/connections'),
+        ])
+
+        if (!usersResponse.ok || !presenceResponse.ok || !connectionsResponse.ok) {
+          throw new Error('Failed to fetch data')
         }
-        const usersData = await response.json()
+
+        const [usersData, presenceData, connectionsData] = await Promise.all([
+          usersResponse.json(),
+          presenceResponse.json(),
+          connectionsResponse.json(),
+        ])
+
         setUsers(usersData)
+        setUserPresence(presenceData)
+        setConnections(connectionsData)
+
+        // Filter pending connection requests
+        const pendingRequests = connectionsData.filter((conn: Connection) =>
+          conn.status === 'pending' && conn.connectedTo === session.user.email
+        )
+        setConnectionRequests(pendingRequests)
+
       } catch (err) {
-        console.error('Error fetching users:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load users')
+        console.error('Error fetching data:', err)
+        setError(err instanceof Error ? err.message : 'Failed to load data')
       } finally {
         setLoading(false)
       }
     }
 
-    fetchUsers()
+    fetchData()
   }, [session])
 
   const toggleUserSelection = (userId: string) => {
@@ -77,6 +181,122 @@ export default function Connections() {
   const clearSelection = () => {
     setSelectedUsers(new Set())
     setActionMode(null)
+  }
+
+  const handleAddConnection = async (targetEmail: string) => {
+    try {
+      const response = await fetch('/api/connections', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ targetEmail }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to send connection request')
+      }
+
+      // Emit socket event for real-time notification
+      if (socket) {
+        socket.emit('request-connection', {
+          fromUserId: session?.user?.id,
+          toUserEmail: targetEmail,
+        })
+      }
+
+      alert('Connection request sent successfully!')
+      fetchConnections()
+    } catch (error) {
+      console.error('Error adding connection:', error)
+      alert(`Failed to send connection request: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleAcceptConnection = async (connectionId: string) => {
+    try {
+      const response = await fetch(`/api/connections/${connectionId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'accept' }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to accept connection')
+      }
+
+      // Emit socket event for real-time notification
+      if (socket) {
+        socket.emit('accept-connection', {
+          userId: session?.user?.id,
+          requesterEmail: connectionRequests.find(c => c.id === connectionId)?.userId,
+        })
+      }
+
+      alert('Connection accepted!')
+      fetchConnections()
+    } catch (error) {
+      console.error('Error accepting connection:', error)
+      alert(`Failed to accept connection: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleRejectConnection = async (connectionId: string) => {
+    try {
+      const response = await fetch(`/api/connections/${connectionId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'reject' }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to reject connection')
+      }
+
+      alert('Connection request rejected')
+      fetchConnections()
+    } catch (error) {
+      console.error('Error rejecting connection:', error)
+      alert(`Failed to reject connection: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const getUserStatus = (email: string) => {
+    const presence = userPresence[email]
+    if (presence?.isOnline) {
+      return { status: 'online', text: 'Online', color: 'text-green-600', dotColor: 'bg-green-500' }
+    } else if (presence) {
+      const lastSeen = new Date(presence.lastSeen)
+      const now = new Date()
+      const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
+
+      if (diffMinutes < 1) return { status: 'away', text: 'Just now', color: 'text-gray-500', dotColor: 'bg-gray-400' }
+      if (diffMinutes < 60) return { status: 'away', text: `${diffMinutes}m ago`, color: 'text-gray-500', dotColor: 'bg-gray-400' }
+
+      const diffHours = Math.floor(diffMinutes / 60)
+      if (diffHours < 24) return { status: 'away', text: `${diffHours}h ago`, color: 'text-gray-500', dotColor: 'bg-gray-400' }
+
+      return { status: 'offline', text: lastSeen.toLocaleDateString(), color: 'text-gray-400', dotColor: 'bg-gray-300' }
+    }
+    return { status: 'offline', text: 'Offline', color: 'text-gray-400', dotColor: 'bg-gray-300' }
+  }
+
+  const isConnected = (email: string) => {
+    return connections.some(conn =>
+      (conn.userId === session?.user?.id && conn.connectedTo === email && conn.status === 'accepted') ||
+      (conn.connectedTo === session?.user?.email && conn.userId === email && conn.status === 'accepted')
+    )
+  }
+
+  const hasPendingRequest = (email: string) => {
+    return connections.some(conn =>
+      conn.userId === session?.user?.id && conn.connectedTo === email && conn.status === 'pending'
+    )
   }
 
   if (!session) {
@@ -198,6 +418,54 @@ export default function Connections() {
             )}
           </div>
 
+          {/* Connection Requests */}
+          {connectionRequests.length > 0 && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 mb-6">
+              <h2 className="text-lg md:text-xl font-semibold mb-4">Connection Requests</h2>
+              <div className="space-y-3">
+                {connectionRequests.map((request) => (
+                  <div key={request.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
+                        {request.user.image ? (
+                          <img
+                            src={request.user.image}
+                            alt={request.user.name || request.user.email}
+                            className="w-10 h-10 rounded-full object-cover"
+                          />
+                        ) : (
+                          (request.user.name || request.user.email).charAt(0).toUpperCase()
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium text-sm md:text-base">
+                          {request.user.name || request.user.email.split('@')[0]}
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          {request.user.email}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleAcceptConnection(request.id)}
+                        className="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={() => handleRejectConnection(request.id)}
+                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Users List */}
           {users.length === 0 ? (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-12 text-center">
@@ -220,30 +488,73 @@ export default function Connections() {
                   onClick={() => actionMode === "send" && toggleUserSelection(user.id)}
                 >
                   <div className="flex items-center gap-4 mb-4">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg">
-                      {user.image ? (
-                        <img
-                          src={user.image}
-                          alt={user.name || user.email}
-                          className="w-12 h-12 rounded-full object-cover"
-                        />
-                      ) : (
-                        (user.name || user.email).charAt(0).toUpperCase()
-                      )}
+                    <div className="relative">
+                      <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg">
+                        {user.image ? (
+                          <img
+                            src={user.image}
+                            alt={user.name || user.email}
+                            className="w-12 h-12 rounded-full object-cover"
+                          />
+                        ) : (
+                          (user.name || user.email).charAt(0).toUpperCase()
+                        )}
+                      </div>
+                      {/* Online status indicator */}
+                      <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800 ${getUserStatus(user.email).dotColor}`}></div>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-base md:text-lg truncate">
-                        {user.name || user.email.split('@')[0]}
-                      </h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-base md:text-lg truncate">
+                          {user.name || user.email.split('@')[0]}
+                        </h3>
+                        <span className={`text-xs px-2 py-1 rounded-full ${getUserStatus(user.email).color} bg-gray-100 dark:bg-gray-700`}>
+                          {getUserStatus(user.email).text}
+                        </span>
+                      </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
                         {user.email}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
+                  <div className="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400 mb-4">
                     <span>{user._count.files} files uploaded</span>
                     <span>{user._count.sharedFiles} files shared</span>
+                  </div>
+
+                  {/* Connection status and actions */}
+                  <div className="space-y-2">
+                    {isConnected(user.email) ? (
+                      <div className="flex items-center justify-center">
+                        <span className="text-green-600 dark:text-green-400 text-sm font-medium flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                          Connected
+                        </span>
+                      </div>
+                    ) : hasPendingRequest(user.email) ? (
+                      <div className="flex items-center justify-center">
+                        <span className="text-yellow-600 dark:text-yellow-400 text-sm font-medium flex items-center gap-2">
+                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Request Pending
+                        </span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAddConnection(user.email)
+                        }}
+                        className="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
+                      >
+                        Add Connection
+                      </button>
+                    )}
                   </div>
 
                   {actionMode === "send" && (

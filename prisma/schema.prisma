@@ -38,21 +38,23 @@ model Session {
 }
 
 model User {
-  id            String     @id @default(cuid())
+  id            String           @id @default(cuid())
   name          String?
-  email         String     @unique
+  email         String           @unique
   emailVerified DateTime?
   image         String?
   password      String?
-  role          String     @default("user")
+  role          String           @default("user")
   accounts      Account[]
   sessions      Session[]
   files         File[]
   sharedFiles   FileShare[]
   messages      Message[]
-  createdRooms  ChatRoom[] @relation("creator")
-  memberRooms   ChatRoom[] @relation("members")
+  createdRooms  ChatRoom[]       @relation("creator")
+  memberRooms   ChatRoom[]       @relation("members")
   auditLogs     AuditLog[]
+  presence      UserPresence?
+  initiatedConnections UserConnection[] @relation("initiator")
 }
 
 model VerificationToken {
@@ -114,6 +116,36 @@ model Message {
   user      User     @relation(fields: [userId], references: [id])
   room      ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+}
+
+model UserPresence {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isOnline  Boolean  @default(false)
+  lastSeen  DateTime @default(now())
+  socketId  String?  // Socket.io socket ID
+  userAgent String?
+  ipAddress String?
+
+  @@index([userId])
+  @@index([isOnline])
+  @@index([lastSeen])
+}
+
+model UserConnection {
+  id          String   @id @default(cuid())
+  userId      String   // User who initiated the connection
+  user        User     @relation("initiator", fields: [userId], references: [id], onDelete: Cascade)
+  connectedTo String   // Email of the connected user
+  status      String   @default("pending") // "pending", "accepted", "blocked"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, connectedTo])
+  @@index([userId])
+  @@index([connectedTo])
+  @@index([status])
 }
 
 model AuditLog {
