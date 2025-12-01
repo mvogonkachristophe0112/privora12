@@ -43,7 +43,8 @@ export async function GET() {
     // Transform the data to match the expected format
     // Note: encryptionKey is not sent to client for security - decryption happens server-side
     const files = receivedFiles.map((share: any) => ({
-      id: share.file.id,
+      id: share.id, // Use share ID as the primary identifier
+      fileId: share.file.id, // Keep file ID for download operations
       name: share.file.name,
       originalName: share.file.originalName || share.file.name,
       size: share.file.size,

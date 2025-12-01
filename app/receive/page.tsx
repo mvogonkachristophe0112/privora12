@@ -4,7 +4,8 @@ import { useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 
 interface ReceivedFile {
-  id: string
+  id: string // This is the share ID
+  fileId: string // This is the actual file ID for downloads
   name: string
   originalName: string
   size: number
@@ -28,6 +29,9 @@ export default function Receive() {
   const [decryptionKey, setDecryptionKey] = useState("")
   const [decryptionError, setDecryptionError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [deletingFile, setDeletingFile] = useState<ReceivedFile | null>(null)
+  const [viewingFile, setViewingFile] = useState<ReceivedFile | null>(null)
+  const [actionLoading, setActionLoading] = useState<string | null>(null) // Track which file is being acted upon
 
   useEffect(() => {
     const fetchReceivedFiles = async () => {
@@ -94,8 +98,8 @@ export default function Receive() {
 
   const downloadFile = async (file: ReceivedFile, key: string) => {
     try {
-      setDownloading(true)
-      const url = `/api/files/download/${file.id}${key ? `?key=${encodeURIComponent(key)}` : ''}`
+      setActionLoading(file.id)
+      const url = `/api/files/download/${file.fileId}${key ? `?key=${encodeURIComponent(key)}` : ''}`
       const response = await fetch(url)
 
       if (!response.ok) {
@@ -119,7 +123,7 @@ export default function Receive() {
       console.error('Download error:', error)
       setDecryptionError(error instanceof Error ? error.message : 'Download failed')
     } finally {
-      setDownloading(false)
+      setActionLoading(null)
     }
   }
 
@@ -129,7 +133,112 @@ export default function Receive() {
       return
     }
 
-    await downloadFile(decryptingFile, decryptionKey.trim())
+    if (viewingFile) {
+      // Handle viewing decrypted file
+      try {
+        setActionLoading(decryptingFile.id)
+        const url = `/api/files/download/${decryptingFile.fileId}?key=${encodeURIComponent(decryptionKey.trim())}`
+        const response = await fetch(url)
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.error || 'Failed to fetch decrypted file')
+        }
+
+        const blob = await response.blob()
+        const viewUrl = window.URL.createObjectURL(blob)
+
+        // Open in new tab
+        window.open(viewUrl, '_blank')
+
+        // Clean up after a delay
+        setTimeout(() => {
+          window.URL.revokeObjectURL(viewUrl)
+        }, 1000)
+
+        setDecryptingFile(null)
+        setViewingFile(null)
+        setDecryptionKey("")
+      } catch (error) {
+        console.error('View decryption error:', error)
+        setDecryptionError(error instanceof Error ? error.message : 'Failed to view file')
+      } finally {
+        setActionLoading(null)
+      }
+    } else {
+      // Handle downloading decrypted file
+      await downloadFile(decryptingFile, decryptionKey.trim())
+    }
+  }
+
+  const handleView = async (file: ReceivedFile) => {
+    if (file.encrypted) {
+      // For encrypted files, we need to download and then view
+      setViewingFile(file)
+      setDecryptingFile(file)
+      setDecryptionKey("")
+      setDecryptionError(null)
+      return
+    }
+
+    // For non-encrypted files, try to view directly
+    try {
+      setActionLoading(file.id)
+      const url = `/api/files/download/${file.fileId}`
+      const response = await fetch(url)
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch file for viewing')
+      }
+
+      const blob = await response.blob()
+      const viewUrl = window.URL.createObjectURL(blob)
+
+      // Open in new tab
+      window.open(viewUrl, '_blank')
+
+      // Clean up after a delay
+      setTimeout(() => {
+        window.URL.revokeObjectURL(viewUrl)
+      }, 1000)
+    } catch (error) {
+      console.error('View error:', error)
+      // Fallback to download if view fails
+      await downloadFile(file, "")
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleDelete = async (file: ReceivedFile) => {
+    if (!confirm(`Are you sure you want to remove "${file.name}" from your received files? This action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      setActionLoading(file.id)
+      const response = await fetch(`/api/files/received/${file.id}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to delete file')
+      }
+
+      // Remove from local state
+      setReceivedFiles(prev => prev.filter(f => f.id !== file.id))
+    } catch (error) {
+      console.error('Delete error:', error)
+      alert(`Failed to delete file: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleBrowseSharedFiles = () => {
+    // Navigate to connections page to see available users
+    window.location.href = '/connections'
   }
 
   if (!session) {
@@ -192,7 +301,10 @@ export default function Receive() {
               <p className="text-gray-600 dark:text-gray-400 mb-6">
                 When someone shares files with you, they'll appear here.
               </p>
-              <button className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors">
+              <button
+                onClick={handleBrowseSharedFiles}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors touch-manipulation"
+              >
                 Browse Shared Files
               </button>
             </div>
@@ -221,16 +333,24 @@ export default function Receive() {
                       <div className="flex gap-2 w-full sm:w-auto">
                         <button
                           onClick={() => handleDownload(file)}
-                          disabled={downloading}
+                          disabled={actionLoading === file.id}
                           className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
                         >
-                          {downloading ? "Downloading..." : "Download"}
+                          {actionLoading === file.id ? "Processing..." : "Download"}
                         </button>
-                        <button className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm touch-manipulation">
-                          View
+                        <button
+                          onClick={() => handleView(file)}
+                          disabled={actionLoading === file.id}
+                          className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          {actionLoading === file.id ? "Loading..." : "View"}
                         </button>
-                        <button className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm touch-manipulation">
-                          Delete
+                        <button
+                          onClick={() => handleDelete(file)}
+                          disabled={actionLoading === file.id}
+                          className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                        >
+                          {actionLoading === file.id ? "Deleting..." : "Delete"}
                         </button>
                       </div>
                     </div>
@@ -270,7 +390,7 @@ export default function Receive() {
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-4 md:p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg md:text-xl font-semibold mb-4">Decrypt File</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Enter the decryption key to download <strong className="break-words">{decryptingFile.name}</strong>
+              Enter the decryption key to {viewingFile ? 'view' : 'download'} <strong className="break-words">{decryptingFile.name}</strong>
             </p>
 
             <div className="space-y-4">
@@ -296,14 +416,19 @@ export default function Receive() {
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={handleDecryptAndDownload}
-                  disabled={downloading || !decryptionKey.trim()}
+                  disabled={actionLoading !== null || !decryptionKey.trim()}
                   className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white py-3 rounded-lg transition-colors disabled:cursor-not-allowed text-base font-medium touch-manipulation"
                 >
-                  {downloading ? "Decrypting..." : "Decrypt & Download"}
+                  {actionLoading !== null ? "Processing..." : `Decrypt & ${viewingFile ? 'View' : 'Download'}`}
                 </button>
                 <button
-                  onClick={() => setDecryptingFile(null)}
-                  disabled={downloading}
+                  onClick={() => {
+                    setDecryptingFile(null)
+                    setViewingFile(null)
+                    setDecryptionKey("")
+                    setDecryptionError(null)
+                  }}
+                  disabled={actionLoading !== null}
                   className="flex-1 sm:flex-none px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:cursor-not-allowed text-base font-medium touch-manipulation"
                 >
                   Cancel
