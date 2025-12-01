@@ -13,6 +13,7 @@
     "@prisma/client": "^6.19.0",
     "@vercel/blob": "^2.0.0",
     "bcryptjs": "^3.0.3",
+    "critters": "^0.0.23",
     "crypto-js": "^4.2.0",
     "jsonwebtoken": "^9.0.2",
     "next": "16.0.3",

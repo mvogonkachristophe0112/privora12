@@ -64,13 +64,17 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const [lastActivity, setLastActivity] = useState<Date>(new Date())
   const [heartbeatInterval, setHeartbeatInterval] = useState<NodeJS.Timeout | null>(null)
 
-  // Initialize device type detection
+  // Initialize device type detection (client-side only)
   useEffect(() => {
-    setDeviceType(detectDeviceType())
+    if (typeof window !== 'undefined') {
+      setDeviceType(detectDeviceType())
+    }
   }, [])
 
-  // Activity tracking for automatic offline detection
+  // Activity tracking for automatic offline detection (client-side only)
   useEffect(() => {
+    if (typeof window === 'undefined') return
+
     const updateActivity = () => {
       setLastActivity(new Date())
     }
@@ -123,6 +127,9 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       }
       return
     }
+
+    // Only initialize Socket.io on client side
+    if (typeof window === 'undefined') return
 
     // Initialize Socket.io connection for authenticated users
     const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
