@@ -1,0 +1,272 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { useSession } from "next-auth/react"
+import { useRouter } from "next/navigation"
+
+interface User {
+  id: string
+  name: string | null
+  email: string
+  image: string | null
+  _count: {
+    files: number
+    sharedFiles: number
+  }
+}
+
+export default function Connections() {
+  const { data: session } = useSession()
+  const router = useRouter()
+  const [users, setUsers] = useState<User[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
+  const [actionMode, setActionMode] = useState<"send" | "receive" | null>(null)
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      if (!session) return
+
+      try {
+        setLoading(true)
+        setError(null)
+        const response = await fetch('/api/users')
+        if (!response.ok) {
+          throw new Error('Failed to fetch users')
+        }
+        const usersData = await response.json()
+        setUsers(usersData)
+      } catch (err) {
+        console.error('Error fetching users:', err)
+        setError(err instanceof Error ? err.message : 'Failed to load users')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchUsers()
+  }, [session])
+
+  const toggleUserSelection = (userId: string) => {
+    const newSelected = new Set(selectedUsers)
+    if (newSelected.has(userId)) {
+      newSelected.delete(userId)
+    } else {
+      newSelected.add(userId)
+    }
+    setSelectedUsers(newSelected)
+  }
+
+  const handleSendFiles = () => {
+    if (selectedUsers.size === 0) return
+
+    // Store selected users in sessionStorage for the upload page
+    const selectedUserEmails = users
+      .filter(user => selectedUsers.has(user.id))
+      .map(user => user.email)
+
+    sessionStorage.setItem('selectedRecipients', JSON.stringify(selectedUserEmails))
+    router.push('/upload')
+  }
+
+  const handleViewReceivedFiles = () => {
+    router.push('/receive')
+  }
+
+  const clearSelection = () => {
+    setSelectedUsers(new Set())
+    setActionMode(null)
+  }
+
+  if (!session) {
+    return <div className="min-h-screen flex items-center justify-center">Please login to view connections</div>
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p>Loading connections...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h2 className="text-2xl font-semibold mb-4">Error Loading Connections</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold">Connections</h1>
+              <p className="text-gray-600 dark:text-gray-400 mt-2">
+                Connect with other users to share files securely
+              </p>
+            </div>
+            <div className="text-sm text-gray-500">
+              {users.length} users available
+            </div>
+          </div>
+
+          {/* Action Bar */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 mb-6">
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setActionMode("send")}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                    actionMode === "send"
+                      ? "bg-blue-500 text-white"
+                      : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                  }`}
+                >
+                  📤 Send Files
+                </button>
+                <button
+                  onClick={() => setActionMode("receive")}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                    actionMode === "receive"
+                      ? "bg-green-500 text-white"
+                      : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                  }`}
+                >
+                  📥 View Received Files
+                </button>
+              </div>
+
+              {selectedUsers.size > 0 && (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    {selectedUsers.size} user{selectedUsers.size !== 1 ? 's' : ''} selected
+                  </span>
+                  <button
+                    onClick={clearSelection}
+                    className="text-red-500 hover:text-red-700 text-sm underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {actionMode === "send" && selectedUsers.size > 0 && (
+              <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <p className="text-sm text-blue-800 dark:text-blue-200 mb-3">
+                  Ready to send files to {selectedUsers.size} user{selectedUsers.size !== 1 ? 's' : ''}?
+                </p>
+                <button
+                  onClick={handleSendFiles}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+                >
+                  Continue to Upload
+                </button>
+              </div>
+            )}
+
+            {actionMode === "receive" && (
+              <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                  View files that have been shared with you
+                </p>
+                <button
+                  onClick={handleViewReceivedFiles}
+                  className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+                >
+                  View Received Files
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Users List */}
+          {users.length === 0 ? (
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-12 text-center">
+              <div className="text-6xl mb-4">👥</div>
+              <h2 className="text-2xl font-semibold mb-4">No Other Users</h2>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">
+                There are no other verified users in the system yet.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {users.map((user) => (
+                <div
+                  key={user.id}
+                  className={`bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 hover:shadow-xl transition-all cursor-pointer ${
+                    selectedUsers.has(user.id) && actionMode === "send"
+                      ? "ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                      : "hover:scale-105"
+                  }`}
+                  onClick={() => actionMode === "send" && toggleUserSelection(user.id)}
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg">
+                      {user.image ? (
+                        <img
+                          src={user.image}
+                          alt={user.name || user.email}
+                          className="w-12 h-12 rounded-full object-cover"
+                        />
+                      ) : (
+                        (user.name || user.email).charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-base md:text-lg truncate">
+                        {user.name || user.email.split('@')[0]}
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                        {user.email}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
+                    <span>{user._count.files} files uploaded</span>
+                    <span>{user._count.sharedFiles} files shared</span>
+                  </div>
+
+                  {actionMode === "send" && (
+                    <div className="mt-4 flex items-center justify-center">
+                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                        selectedUsers.has(user.id)
+                          ? "bg-blue-500 border-blue-500"
+                          : "border-gray-300 dark:border-gray-600"
+                      }`}>
+                        {selectedUsers.has(user.id) && (
+                          <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -214,7 +214,7 @@ export default function Upload() {
     }
   }, [])
 
-  // Load upload history on mount
+  // Load upload history and check for pre-selected recipients on mount
   useEffect(() => {
     const savedHistory = localStorage.getItem('uploadHistory')
     if (savedHistory) {
@@ -232,6 +232,19 @@ export default function Upload() {
         setResumableUploads(new Map(parsed))
       } catch (error) {
         console.warn('Failed to load resumable uploads:', error)
+      }
+    }
+
+    // Check for pre-selected recipients from connections page
+    const selectedRecipients = sessionStorage.getItem('selectedRecipients')
+    if (selectedRecipients) {
+      try {
+        const recipients = JSON.parse(selectedRecipients)
+        setRecipients(recipients)
+        setShareMode("share") // Automatically switch to share mode
+        sessionStorage.removeItem('selectedRecipients') // Clean up
+      } catch (error) {
+        console.warn('Failed to parse selected recipients:', error)
       }
     }
   }, [])

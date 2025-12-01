@@ -32,6 +32,9 @@ export function Navbar() {
                 <Link href="/upload" className="hover:text-primary-200 transition-colors text-sm lg:text-base">
                   {t('nav.upload')}
                 </Link>
+                <Link href="/connections" className="hover:text-primary-200 transition-colors text-sm lg:text-base">
+                  👥 Connections
+                </Link>
                 <Link href="/receive" className="hover:text-primary-200 transition-colors text-sm lg:text-base">
                   {t('common.download')}
                 </Link>
@@ -101,6 +104,9 @@ export function Navbar() {
                   </Link>
                   <Link href="/upload" className="hover:text-primary-200 transition-colors py-2" onClick={() => setIsOpen(false)}>
                     {t('nav.upload')}
+                  </Link>
+                  <Link href="/connections" className="hover:text-primary-200 transition-colors py-2" onClick={() => setIsOpen(false)}>
+                    👥 Connections
                   </Link>
                   <Link href="/receive" className="hover:text-primary-200 transition-colors py-2" onClick={() => setIsOpen(false)}>
                     {t('common.download')}
