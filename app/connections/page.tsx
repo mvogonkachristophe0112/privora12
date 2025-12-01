@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
-import { io, Socket } from 'socket.io-client'
+import { usePresence, useUserPresence } from "@/lib/presence-context"
 
 interface User {
   id: string
@@ -33,14 +33,13 @@ interface Connection {
 export default function Connections() {
   const { data: session } = useSession()
   const router = useRouter()
+  const { userPresence, socket } = usePresence()
   const [users, setUsers] = useState<User[]>([])
   const [connections, setConnections] = useState<Connection[]>([])
-  const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
   const [actionMode, setActionMode] = useState<"send" | "receive" | null>(null)
-  const [socket, setSocket] = useState<Socket | null>(null)
   const [connectionRequests, setConnectionRequests] = useState<Connection[]>([])
 
   const fetchConnections = async () => {
@@ -62,49 +61,26 @@ export default function Connections() {
     }
   }
 
+  // Listen for connection-related socket events
   useEffect(() => {
-    if (!session?.user?.id) return
+    if (!socket) return
 
-    // Initialize Socket.io connection
-    const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
-      path: '/api/socket',
-    })
-
-    socketConnection.on('connect', () => {
-      console.log('Connected to Socket.io server')
-      // Mark user as online
-      socketConnection.emit('user-online', session.user.id)
-    })
-
-    socketConnection.on('user-status-changed', (data) => {
-      setUserPresence(prev => ({
-        ...prev,
-        [data.userId]: {
-          isOnline: data.isOnline,
-          lastSeen: new Date(data.lastSeen),
-          user: prev[data.userId]?.user,
-        },
-      }))
-    })
-
-    socketConnection.on('connection-request', (data) => {
-      // Refresh connections when a new request comes in
+    const handleConnectionRequest = () => {
       fetchConnections()
-    })
-
-    socketConnection.on('connection-accepted', (data) => {
-      // Refresh connections when a request is accepted
-      fetchConnections()
-    })
-
-    setSocket(socketConnection)
-
-    // Cleanup on unmount
-    return () => {
-      socketConnection.emit('user-offline', session.user.id)
-      socketConnection.disconnect()
     }
-  }, [session])
+
+    const handleConnectionAccepted = () => {
+      fetchConnections()
+    }
+
+    socket.on('connection-request', handleConnectionRequest)
+    socket.on('connection-accepted', handleConnectionAccepted)
+
+    return () => {
+      socket.off('connection-request', handleConnectionRequest)
+      socket.off('connection-accepted', handleConnectionAccepted)
+    }
+  }, [socket])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -114,25 +90,22 @@ export default function Connections() {
         setLoading(true)
         setError(null)
 
-        // Fetch users, presence, and connections in parallel
-        const [usersResponse, presenceResponse, connectionsResponse] = await Promise.all([
+        // Fetch users and connections in parallel
+        const [usersResponse, connectionsResponse] = await Promise.all([
           fetch('/api/users'),
-          fetch('/api/presence'),
           fetch('/api/connections'),
         ])
 
-        if (!usersResponse.ok || !presenceResponse.ok || !connectionsResponse.ok) {
+        if (!usersResponse.ok || !connectionsResponse.ok) {
           throw new Error('Failed to fetch data')
         }
 
-        const [usersData, presenceData, connectionsData] = await Promise.all([
+        const [usersData, connectionsData] = await Promise.all([
           usersResponse.json(),
-          presenceResponse.json(),
           connectionsResponse.json(),
         ])
 
         setUsers(usersData)
-        setUserPresence(presenceData)
         setConnections(connectionsData)
 
         // Filter pending connection requests
@@ -267,23 +240,7 @@ export default function Connections() {
   }
 
   const getUserStatus = (email: string) => {
-    const presence = userPresence[email]
-    if (presence?.isOnline) {
-      return { status: 'online', text: 'Online', color: 'text-green-600', dotColor: 'bg-green-500' }
-    } else if (presence) {
-      const lastSeen = new Date(presence.lastSeen)
-      const now = new Date()
-      const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
-
-      if (diffMinutes < 1) return { status: 'away', text: 'Just now', color: 'text-gray-500', dotColor: 'bg-gray-400' }
-      if (diffMinutes < 60) return { status: 'away', text: `${diffMinutes}m ago`, color: 'text-gray-500', dotColor: 'bg-gray-400' }
-
-      const diffHours = Math.floor(diffMinutes / 60)
-      if (diffHours < 24) return { status: 'away', text: `${diffHours}h ago`, color: 'text-gray-500', dotColor: 'bg-gray-400' }
-
-      return { status: 'offline', text: lastSeen.toLocaleDateString(), color: 'text-gray-400', dotColor: 'bg-gray-300' }
-    }
-    return { status: 'offline', text: 'Offline', color: 'text-gray-400', dotColor: 'bg-gray-300' }
+    return useUserPresence(email)
   }
 
   const isConnected = (email: string) => {
