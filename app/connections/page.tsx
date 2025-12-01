@@ -295,9 +295,9 @@ export default function Connections() {
         <div className="max-w-4xl mx-auto">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold">Connections</h1>
+              <h1 className="text-2xl md:text-3xl font-bold">User Directory</h1>
               <p className="text-gray-600 dark:text-gray-400 mt-2">
-                Connect with other users to share files securely
+                All signed-in users are automatically visible here. Share files and connect directly.
               </p>
             </div>
             <div className="text-sm text-gray-500">
@@ -423,13 +423,13 @@ export default function Connections() {
             </div>
           )}
 
-          {/* Users List */}
+          {/* Users Directory */}
           {users.length === 0 ? (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-12 text-center">
               <div className="text-6xl mb-4">👥</div>
-              <h2 className="text-2xl font-semibold mb-4">No Other Users</h2>
+              <h2 className="text-2xl font-semibold mb-4">No Other Users Online</h2>
               <p className="text-gray-600 dark:text-gray-400 mb-6">
-                There are no other verified users in the system yet.
+                Other users will appear here automatically when they sign in.
               </p>
             </div>
           ) : (
@@ -480,9 +480,45 @@ export default function Connections() {
                     <span>{user._count.sharedFiles} files shared</span>
                   </div>
 
-                  {/* Connection status and actions */}
+                  {/* Action buttons - all users are automatically visible */}
                   <div className="space-y-2">
-                    {isConnected(user.email) ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // Direct file sharing without connection request
+                          toggleUserSelection(user.id)
+                          setActionMode("send")
+                        }}
+                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
+                      >
+                        Share Files
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // Could implement direct messaging or other actions
+                        }}
+                        className="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
+                      >
+                        Message
+                      </button>
+                    </div>
+
+                    {/* Optional connection request for closer relationships */}
+                    {!isConnected(user.email) && !hasPendingRequest(user.email) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAddConnection(user.email)
+                        }}
+                        className="w-full bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
+                      >
+                        Add to Connections
+                      </button>
+                    )}
+
+                    {isConnected(user.email) && (
                       <div className="flex items-center justify-center">
                         <span className="text-green-600 dark:text-green-400 text-sm font-medium flex items-center gap-2">
                           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -491,7 +527,9 @@ export default function Connections() {
                           Connected
                         </span>
                       </div>
-                    ) : hasPendingRequest(user.email) ? (
+                    )}
+
+                    {hasPendingRequest(user.email) && (
                       <div className="flex items-center justify-center">
                         <span className="text-yellow-600 dark:text-yellow-400 text-sm font-medium flex items-center gap-2">
                           <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -501,16 +539,6 @@ export default function Connections() {
                           Request Pending
                         </span>
                       </div>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleAddConnection(user.email)
-                        }}
-                        className="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
-                      >
-                        Add Connection
-                      </button>
                     )}
                   </div>
 
