@@ -8,7 +8,7 @@
     "manager": "File Manager",
     "viewer": "File Viewer",
     "sharing": "File Sharing",
-    "crychat": "CryChat",
+    "crychat": "CrypChat",
     "settings": "Settings",
     "about": "About",
     "contact": "Contact/Support",
@@ -128,7 +128,7 @@
     "revoke": "Revoke Access"
   },
   "crychat": {
-    "title": "CryChat",
+    "title": "CrypChat",
     "rooms": "Chat Rooms",
     "messages": "Messages",
     "send": "Send Message",

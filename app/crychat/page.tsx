@@ -24,7 +24,7 @@ interface User {
   lastSeen: string
 }
 
-export default function CryChat() {
+export default function CrypChat() {
   const { data: session } = useSession()
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
@@ -34,16 +34,37 @@ export default function CryChat() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting')
+  const [activeUsers, setActiveUsers] = useState<number>(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
+    // Initialize connection
+    setConnectionStatus('connecting')
     fetchMessages()
     fetchOnlineUsers()
+
+    // Simulate connection establishment
+    setTimeout(() => setConnectionStatus('connected'), 1000)
+
+    // Cleanup on unmount
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current)
+      }
+    }
   }, [roomId])
 
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Update active users count
+  useEffect(() => {
+    setActiveUsers(onlineUsers.filter(u => u.isOnline).length)
+  }, [onlineUsers])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -63,10 +84,20 @@ export default function CryChat() {
 
   const fetchOnlineUsers = async () => {
     // Mock online users - in real app, this would come from API
+    // Simulate scalability with more users
     const mockUsers: User[] = [
       { id: "1", name: "Alice Johnson", email: "alice@example.com", isOnline: true, lastSeen: new Date().toISOString() },
       { id: "2", name: "Bob Smith", email: "bob@example.com", isOnline: true, lastSeen: new Date().toISOString() },
-      { id: "3", name: "Carol Davis", email: "carol@example.com", isOnline: false, lastSeen: new Date(Date.now() - 300000).toISOString() }
+      { id: "3", name: "Carol Davis", email: "carol@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "4", name: "David Wilson", email: "david@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "5", name: "Emma Brown", email: "emma@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "6", name: "Frank Miller", email: "frank@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "7", name: "Grace Lee", email: "grace@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "8", name: "Henry Taylor", email: "henry@example.com", isOnline: false, lastSeen: new Date(Date.now() - 300000).toISOString() },
+      { id: "9", name: "Ivy Chen", email: "ivy@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "10", name: "Jack Anderson", email: "jack@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "11", name: "Kate Martinez", email: "kate@example.com", isOnline: true, lastSeen: new Date().toISOString() },
+      { id: "12", name: "Liam Garcia", email: "liam@example.com", isOnline: false, lastSeen: new Date(Date.now() - 600000).toISOString() }
     ]
     setOnlineUsers(mockUsers)
   }
@@ -156,13 +187,38 @@ export default function CryChat() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex">
+    <div className="min-h-screen bg-background text-foreground flex relative">
+      {/* Mobile Menu Overlay */}
+      {isMobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="w-80 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+      <div className={`fixed md:relative inset-y-0 left-0 z-50 w-80 md:w-80 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col transform transition-transform duration-300 ease-in-out ${
+        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+      }`}>
         {/* Header */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold">CryChat</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold">CrypChat</h2>
+              {/* Connection Status */}
+              <div className="flex items-center gap-1">
+                <div className={`w-2 h-2 rounded-full ${
+                  connectionStatus === 'connected' ? 'bg-green-500' :
+                  connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                  'bg-red-500'
+                }`} />
+                <span className="text-xs text-gray-500 hidden sm:inline">
+                  {connectionStatus === 'connected' ? `${activeUsers} online` :
+                   connectionStatus === 'connecting' ? 'Connecting...' :
+                   'Disconnected'}
+                </span>
+              </div>
+            </div>
             <div className="flex gap-2">
               <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -172,6 +228,15 @@ export default function CryChat() {
               <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+              </button>
+              {/* Mobile close button */}
+              <button
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors md:hidden"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
@@ -250,17 +315,42 @@ export default function CryChat() {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col md:ml-0">
         {/* Chat Header */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="p-3 md:p-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-xl font-bold capitalize">{roomId} Room</h1>
-              <p className="text-sm text-gray-500">
-                {onlineUsers.filter(u => u.isOnline).length} online • {messages.length} messages
-              </p>
+            <div className="flex items-center gap-3">
+              {/* Mobile menu button */}
+              <button
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="md:hidden p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                aria-label="Open menu"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <div>
+                <h1 className="text-lg md:text-xl font-bold capitalize">{roomId} Room</h1>
+                <p className="text-xs md:text-sm text-gray-500">
+                  {activeUsers} online • {messages.length} messages
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* Connection status indicator */}
+              <div className="hidden sm:flex items-center gap-1">
+                <div className={`w-2 h-2 rounded-full ${
+                  connectionStatus === 'connected' ? 'bg-green-500' :
+                  connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                  'bg-red-500'
+                }`} />
+                <span className="text-xs text-gray-500">
+                  {connectionStatus === 'connected' ? 'Connected' :
+                   connectionStatus === 'connecting' ? 'Connecting...' :
+                   'Disconnected'}
+                </span>
+              </div>
               {isTyping && (
                 <div className="flex items-center gap-1 text-sm text-gray-500">
                   <div className="flex gap-1">
@@ -268,7 +358,7 @@ export default function CryChat() {
                     <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                     <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  Someone is typing...
+                  <span className="hidden sm:inline">Someone is typing...</span>
                 </div>
               )}
             </div>
@@ -382,12 +472,12 @@ export default function CryChat() {
         </div>
 
         {/* Message Input */}
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="p-3 md:p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           {/* Reply indicator */}
           {replyTo && (
             <div className="mb-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border-l-4 border-primary-500">
               <div className="flex justify-between items-start">
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     Replying to {replyTo.user.name}
                   </p>
@@ -397,7 +487,8 @@ export default function CryChat() {
                 </div>
                 <button
                   onClick={() => setReplyTo(null)}
-                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  className="ml-2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded transition-colors"
+                  aria-label="Cancel reply"
                 >
                   ✕
                 </button>
@@ -405,21 +496,20 @@ export default function CryChat() {
             </div>
           )}
 
-
-          <div className="flex items-end gap-2">
-
-            {/* Emoji button */}
-            <div className="relative">
+          <div className="flex items-end gap-2 md:gap-3">
+            {/* Emoji button - Hidden on very small screens to save space */}
+            <div className="relative hidden sm:block">
               <button
                 onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="p-3 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                className="p-3 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors touch-manipulation"
                 title="Add emoji"
+                aria-label="Add emoji"
               >
                 😊
               </button>
 
               {showEmojiPicker && (
-                <div className="absolute bottom-full mb-2 p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg">
+                <div className="absolute bottom-full mb-2 p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-10">
                   <div className="grid grid-cols-6 gap-2">
                     {emojis.map((emoji) => (
                       <button
@@ -428,7 +518,8 @@ export default function CryChat() {
                           setNewMessage(prev => prev + emoji)
                           setShowEmojiPicker(false)
                         }}
-                        className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-1 transition-colors"
+                        className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-1 transition-colors touch-manipulation"
+                        aria-label={`Add ${emoji}`}
                       >
                         {emoji}
                       </button>
@@ -440,20 +531,36 @@ export default function CryChat() {
 
             {/* Message input */}
             <div className="flex-1 relative">
-              <input
-                type="text"
+              <textarea
                 value={newMessage}
                 onChange={(e) => {
                   setNewMessage(e.target.value)
+                  // Clear existing timeout
+                  if (typingTimeoutRef.current) {
+                    clearTimeout(typingTimeoutRef.current)
+                  }
                   // Simulate typing indicator
                   if (!isTyping) {
                     setIsTyping(true)
-                    setTimeout(() => setIsTyping(false), 2000)
                   }
+                  // Set new timeout
+                  typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 2000)
                 }}
                 placeholder="Type a message..."
-                className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 resize-none"
-                onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+                className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 resize-none min-h-[44px] max-h-32 touch-manipulation"
+                onKeyPress={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault()
+                    sendMessage()
+                  }
+                }}
+                rows={1}
+                style={{ height: 'auto', minHeight: '44px' }}
+                onInput={(e) => {
+                  const target = e.target as HTMLTextAreaElement
+                  target.style.height = 'auto'
+                  target.style.height = Math.min(target.scrollHeight, 128) + 'px'
+                }}
               />
             </div>
 
@@ -461,7 +568,8 @@ export default function CryChat() {
             <button
               onClick={sendMessage}
               disabled={!newMessage.trim()}
-              className="px-6 py-3 bg-primary-500 hover:bg-primary-600 disabled:bg-gray-400 text-white rounded-lg transition-colors font-medium"
+              className="px-4 md:px-6 py-3 bg-primary-500 hover:bg-primary-600 disabled:bg-gray-400 text-white rounded-lg transition-colors font-medium touch-manipulation min-w-[44px] min-h-[44px] flex items-center justify-center"
+              aria-label="Send message"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />

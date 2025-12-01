@@ -21,7 +21,7 @@ export default function Home() {
     chat: {
       title: "Encrypted Chat",
       description: "Communicate securely with real-time encrypted messaging. Create private rooms or direct chats.",
-      details: "CryChat provides end-to-end encrypted messaging for secure communication. All messages are encrypted before transmission and can only be decrypted by the intended recipients. Create private chat rooms for team collaboration or direct message individuals. Messages are stored securely and can be deleted at any time."
+      details: "CrypChat provides end-to-end encrypted messaging for secure communication. All messages are encrypted before transmission and can only be decrypted by the intended recipients. Create private chat rooms for team collaboration or direct message individuals. Messages are stored securely and can be deleted at any time."
     }
   }
 
