@@ -9,6 +9,7 @@ export default function Upload() {
   const [file, setFile] = useState<File | null>(null)
   const [encrypt, setEncrypt] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [message, setMessage] = useState("")
   const [selectedType, setSelectedType] = useState<string>("")
   const [encryptionKey, setEncryptionKey] = useState("")
@@ -122,10 +123,14 @@ export default function Upload() {
 
     setUploading(true)
     setMessage("")
+    setUploadProgress(0)
 
     try {
       let fileData = await file.arrayBuffer()
       let finalEncryptionKey = ""
+
+      // Show encryption progress
+      setMessage("Preparing file...")
 
       if (encrypt) {
         if (useCustomKey && customKey) {
@@ -136,9 +141,12 @@ export default function Upload() {
           finalEncryptionKey = generateKey()
         }
 
+        setMessage("Encrypting file...")
         const encrypted = encryptFile(fileData, finalEncryptionKey)
         fileData = new TextEncoder().encode(encrypted).buffer
       }
+
+      setMessage("Uploading to secure storage...")
 
       const formData = new FormData()
       formData.append('file', new Blob([fileData]), file.name)
@@ -154,10 +162,14 @@ export default function Upload() {
       })
 
       if (res.ok) {
+        const data = await res.json()
         const successMessage = shareMode === "share"
           ? "File uploaded and shared successfully!"
           : "File uploaded successfully!"
         setMessage(successMessage)
+        setUploadProgress(100)
+
+        // Reset form
         setFile(null)
         setSelectedType("")
         setEncryptionKey("")
@@ -166,12 +178,15 @@ export default function Upload() {
         setRecipients([])
         setNewRecipient("")
       } else {
-        setMessage("Upload failed")
+        const errorData = await res.json().catch(() => ({}))
+        setMessage(errorData.error || "Upload failed")
       }
     } catch (error) {
-      setMessage("An error occurred")
+      console.error('Upload error:', error)
+      setMessage("Upload failed. Please try again.")
     } finally {
       setUploading(false)
+      setUploadProgress(0)
     }
   }
 
@@ -450,6 +465,21 @@ export default function Upload() {
                     {message}
                   </span>
                 </div>
+              </div>
+            )}
+
+            {/* Progress Bar */}
+            {uploading && (
+              <div className="mb-6">
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-2">
+                  <div
+                    className="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
+                  {uploadProgress}% complete
+                </p>
               </div>
             )}
 

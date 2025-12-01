@@ -64,30 +64,34 @@ model VerificationToken {
 }
 
 model File {
-  id          String     @id @default(cuid())
-  name        String
-  size        Int
-  type        String
-  url         String
-  encrypted   Boolean    @default(false)
-  userId      String
-  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  shares      FileShare[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id            String     @id @default(cuid())
+  name          String
+  originalName  String?
+  size          Int
+  type          String
+  url           String
+  encrypted     Boolean    @default(false)
+  encryptionKey String?
+  fileType      String?
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shares        FileShare[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 }
 
 model FileShare {
-  id         String   @id @default(cuid())
-  fileId     String
-  userId     String
-  permissions String  // "view", "download"
-  password   String?
-  expiresAt  DateTime?
-  revoked    Boolean  @default(false)
-  file       File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
+  id              String   @id @default(cuid())
+  fileId          String
+  userId          String?
+  sharedWithEmail String?
+  permissions     String   // "view", "download"
+  password        String?
+  expiresAt       DateTime?
+  revoked         Boolean  @default(false)
+  file            File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
 }
 
 model ChatRoom {

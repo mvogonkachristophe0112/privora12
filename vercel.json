@@ -1,5 +1,14 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "functions": {
+    "app/api/files/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/auth/[...nextauth]/route.ts": {
+      "maxDuration": 10
+    }
+  },
+  "regions": ["iad1"]
 }
