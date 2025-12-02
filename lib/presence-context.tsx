@@ -2,8 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
 import { useSession } from 'next-auth/react'
-import Pusher from 'pusher-js'
-import { triggerPusherEvent } from './pusher'
+import { supabase } from './supabase'
 
 // Device detection utility
 function detectDeviceType(): 'phone' | 'laptop' | 'tablet' | 'desktop' {
@@ -50,7 +49,6 @@ interface UserPresence {
 
 interface PresenceContextType {
   userPresence: Record<string, UserPresence>
-  pusher: Pusher | null
   isConnected: boolean
 }
 
@@ -59,7 +57,6 @@ const PresenceContext = createContext<PresenceContextType | undefined>(undefined
 export function PresenceProvider({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession()
   const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({})
-  const [pusher, setPusher] = useState<Pusher | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [deviceType, setDeviceType] = useState<'phone' | 'laptop' | 'tablet' | 'desktop'>('desktop')
   const [lastActivity, setLastActivity] = useState<Date>(new Date())
@@ -126,108 +123,43 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (status !== 'authenticated' || !session?.user?.id) {
-      // Clean up socket connection when user logs out
-      if (socket) {
-        socket.emit('user-offline', {
-          userId: session?.user?.id,
-          deviceType,
-          lastSeen: new Date()
-        })
-        socket.disconnect()
-        setSocket(null)
-        setIsConnected(false)
-      }
+      // Clean up Supabase connection when user logs out
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current)
         heartbeatIntervalRef.current = null
       }
+      setIsConnected(false)
       return
     }
 
-    // Only initialize Pusher on client side
+    // Only initialize Supabase on client side
     if (typeof window === 'undefined') return
 
-    // Initialize Pusher connection for authenticated users
-    const pusherClient = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
-      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-    })
+    setIsConnected(true)
 
-    pusherClient.connection.bind('connected', () => {
-      console.log('Presence: Connected to Pusher')
-      setIsConnected(true)
-      // Mark user as online when connected
-      fetch('/api/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: session.user.id,
-          deviceType,
-          user: {
-            id: session.user.id,
-            name: session.user.name,
-            email: session.user.email,
-            image: session.user.image
-          }
-        })
-      }).catch(error => console.error('Failed to set user online:', error))
-    })
-
-    pusherClient.connection.bind('disconnected', () => {
-      console.log('Presence: Disconnected from Pusher')
-      setIsConnected(false)
-    })
-
-    // Subscribe to presence channel
-    const channel = pusherClient.subscribe('presence-users')
-
-    channel.bind('user-status-changed', (data: any) => {
-      setUserPresence(prev => ({
-        ...prev,
-        [data.userId]: {
-          isOnline: data.isOnline,
-          lastSeen: new Date(data.lastSeen),
-          deviceType: data.deviceType || 'desktop',
-          user: {
-            id: data.userId,
-            name: data.user?.name || null,
-            email: data.user?.email || data.userId,
-            image: data.user?.image || null
-          },
-        },
-      }))
-    })
-
-    channel.bind('connection-request', () => {
-      console.log('Presence: Connection request received')
-    })
-
-    channel.bind('connection-accepted', () => {
-      console.log('Presence: Connection accepted')
-    })
-
-    setPusher(pusherClient)
+    // Subscribe to presence updates via polling (Supabase real-time would require database changes)
+    const presenceInterval = setInterval(async () => {
+      try {
+        const response = await fetch('/api/presence')
+        if (response.ok) {
+          const presenceData = await response.json()
+          setUserPresence(presenceData)
+        }
+      } catch (error) {
+        console.error('Failed to fetch presence:', error)
+      }
+    }, 5000) // Poll every 5 seconds
 
     // Cleanup on unmount or session change
     return () => {
-      fetch('/api/presence', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: session.user.id,
-          deviceType,
-          lastSeen: new Date()
-        })
-      }).catch(error => console.error('Failed to set user offline:', error))
-
-      pusherClient.disconnect()
-      setPusher(null)
+      clearInterval(presenceInterval)
       setIsConnected(false)
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current)
         heartbeatIntervalRef.current = null
       }
     }
-  }, [session, status, deviceType])
+  }, [session, status])
 
   // Fetch initial presence data
   useEffect(() => {
@@ -250,7 +182,6 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
 
   const value: PresenceContextType = {
     userPresence,
-    pusher,
     isConnected,
   }
 
