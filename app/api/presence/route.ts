@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth/next"
 import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
-import { triggerPusherEvent } from "@/lib/pusher"
 
 // GET - Fetch all online users' presence
 export async function GET() {
@@ -24,7 +23,7 @@ export async function GET() {
 
     // Transform to email-keyed object for easier lookup
     const presenceMap: Record<string, any> = {}
-    presenceData.forEach(p => {
+    presenceData.forEach((p: any) => {
       if (p.user) {
         presenceMap[p.user.email] = {
           isOnline: p.isOnline,
@@ -69,14 +68,6 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Trigger Pusher event for user status change
-    await triggerPusherEvent('presence-users', 'user-status-changed', {
-      userId,
-      isOnline: true,
-      lastSeen: new Date(),
-      deviceType,
-      user,
-    })
 
     return NextResponse.json({ success: true, presence })
   } catch (error) {
@@ -105,13 +96,6 @@ export async function PATCH(request: NextRequest) {
       },
     })
 
-    // Trigger Pusher event
-    await triggerPusherEvent('presence-users', 'user-status-changed', {
-      userId: session.user.id,
-      isOnline: true,
-      lastSeen: new Date(),
-      deviceType: presence.deviceType,
-    })
 
     return NextResponse.json({ success: true, presence })
   } catch (error) {
@@ -147,13 +131,6 @@ export async function DELETE(request: NextRequest) {
       },
     })
 
-    // Trigger Pusher event for user going offline
-    await triggerPusherEvent('presence-users', 'user-status-changed', {
-      userId,
-      isOnline: false,
-      lastSeen: new Date(lastSeen),
-      deviceType,
-    })
 
     return NextResponse.json({ success: true, presence })
   } catch (error) {
