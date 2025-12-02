@@ -1,6 +1,6 @@
 "use client"
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
 import { useSession } from 'next-auth/react'
 import { io, Socket } from 'socket.io-client'
 
@@ -62,7 +62,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)
   const [deviceType, setDeviceType] = useState<'phone' | 'laptop' | 'tablet' | 'desktop'>('desktop')
   const [lastActivity, setLastActivity] = useState<Date>(new Date())
-  const [heartbeatInterval, setHeartbeatInterval] = useState<NodeJS.Timeout | null>(null)
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Initialize device type detection (client-side only)
   useEffect(() => {
@@ -98,13 +98,13 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       }
     }, 10000) // Check every 10 seconds
 
-    setHeartbeatInterval(heartbeat)
+    heartbeatIntervalRef.current = heartbeat
 
     return () => {
       events.forEach(event => {
         document.removeEventListener(event, updateActivity, true)
       })
-      if (heartbeat) clearInterval(heartbeat)
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current)
     }
   }, [lastActivity, socket, session])
 
@@ -121,9 +121,9 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
         setSocket(null)
         setIsConnected(false)
       }
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval)
-        setHeartbeatInterval(null)
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current)
+        heartbeatIntervalRef.current = null
       }
       return
     }
@@ -196,12 +196,12 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       socketConnection.disconnect()
       setSocket(null)
       setIsConnected(false)
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval)
-        setHeartbeatInterval(null)
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current)
+        heartbeatIntervalRef.current = null
       }
     }
-  }, [session, status, deviceType, heartbeatInterval])
+  }, [session, status, deviceType])
 
   // Fetch initial presence data
   useEffect(() => {
