@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth/next"
 import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
+import { triggerPusherEvent } from "@/lib/pusher"
 
 // Rate limiting store (in production, use Redis)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>()
@@ -191,6 +192,13 @@ export async function POST(request: NextRequest) {
       })
 
       return newMessage
+    })
+
+    // Trigger real-time message event
+    await triggerPusherEvent(`room-${roomId}`, 'new-message', {
+      ...message,
+      status: 'sent',
+      timestamp: new Date().toISOString()
     })
 
     return NextResponse.json({

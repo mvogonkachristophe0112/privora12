@@ -2,7 +2,8 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
 import { useSession } from 'next-auth/react'
-import { io, Socket } from 'socket.io-client'
+import Pusher from 'pusher-js'
+import { triggerPusherEvent } from './pusher'
 
 // Device detection utility
 function detectDeviceType(): 'phone' | 'laptop' | 'tablet' | 'desktop' {
@@ -49,7 +50,7 @@ interface UserPresence {
 
 interface PresenceContextType {
   userPresence: Record<string, UserPresence>
-  socket: Socket | null
+  pusher: Pusher | null
   isConnected: boolean
 }
 
@@ -58,7 +59,7 @@ const PresenceContext = createContext<PresenceContextType | undefined>(undefined
 export function PresenceProvider({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession()
   const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({})
-  const [socket, setSocket] = useState<Socket | null>(null)
+  const [pusher, setPusher] = useState<Pusher | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [deviceType, setDeviceType] = useState<'phone' | 'laptop' | 'tablet' | 'desktop'>('desktop')
   const [lastActivity, setLastActivity] = useState<Date>(new Date())
@@ -86,15 +87,30 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
     })
 
     // Heartbeat to keep user online
-    const heartbeat = setInterval(() => {
+    const heartbeat = setInterval(async () => {
       const now = new Date()
       const timeSinceActivity = now.getTime() - lastActivity.getTime()
 
-      // If inactive for more than 30 seconds, mark as away/offline
-      if (timeSinceActivity > 30000 && socket && session?.user?.id) {
-        socket.emit('user-away', session.user.id)
-      } else if (timeSinceActivity <= 30000 && socket && session?.user?.id) {
-        socket.emit('user-active', session.user.id)
+      if (session?.user?.id) {
+        try {
+          if (timeSinceActivity > 30000) {
+            // Mark as away
+            await fetch('/api/presence', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'away' })
+            })
+          } else {
+            // Mark as active
+            await fetch('/api/presence', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'active' })
+            })
+          }
+        } catch (error) {
+          console.error('Heartbeat error:', error)
+        }
       }
     }, 10000) // Check every 10 seconds
 
@@ -106,7 +122,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       })
       if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current)
     }
-  }, [lastActivity, socket, session])
+  }, [lastActivity, session])
 
   useEffect(() => {
     if (status !== 'authenticated' || !session?.user?.id) {
@@ -128,36 +144,43 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    // Only initialize Socket.io on client side
+    // Only initialize Pusher on client side
     if (typeof window === 'undefined') return
 
-    // Initialize Socket.io connection for authenticated users
-    const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
-      path: '/api/socket',
+    // Initialize Pusher connection for authenticated users
+    const pusherClient = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
     })
 
-    socketConnection.on('connect', () => {
-      console.log('Presence: Connected to Socket.io server')
+    pusherClient.connection.bind('connected', () => {
+      console.log('Presence: Connected to Pusher')
       setIsConnected(true)
-      // Mark user as online when socket connects
-      socketConnection.emit('user-online', {
-        userId: session.user.id,
-        deviceType,
-        user: {
-          id: session.user.id,
-          name: session.user.name,
-          email: session.user.email,
-          image: session.user.image
-        }
-      })
+      // Mark user as online when connected
+      fetch('/api/presence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: session.user.id,
+          deviceType,
+          user: {
+            id: session.user.id,
+            name: session.user.name,
+            email: session.user.email,
+            image: session.user.image
+          }
+        })
+      }).catch(error => console.error('Failed to set user online:', error))
     })
 
-    socketConnection.on('disconnect', () => {
-      console.log('Presence: Disconnected from Socket.io server')
+    pusherClient.connection.bind('disconnected', () => {
+      console.log('Presence: Disconnected from Pusher')
       setIsConnected(false)
     })
 
-    socketConnection.on('user-status-changed', (data: any) => {
+    // Subscribe to presence channel
+    const channel = pusherClient.subscribe('presence-users')
+
+    channel.bind('user-status-changed', (data: any) => {
       setUserPresence(prev => ({
         ...prev,
         [data.userId]: {
@@ -174,27 +197,30 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       }))
     })
 
-    socketConnection.on('connection-request', () => {
-      // Handle connection requests - could trigger notifications
+    channel.bind('connection-request', () => {
       console.log('Presence: Connection request received')
     })
 
-    socketConnection.on('connection-accepted', () => {
-      // Handle accepted connections
+    channel.bind('connection-accepted', () => {
       console.log('Presence: Connection accepted')
     })
 
-    setSocket(socketConnection)
+    setPusher(pusherClient)
 
     // Cleanup on unmount or session change
     return () => {
-      socketConnection.emit('user-offline', {
-        userId: session.user.id,
-        deviceType,
-        lastSeen: new Date()
-      })
-      socketConnection.disconnect()
-      setSocket(null)
+      fetch('/api/presence', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: session.user.id,
+          deviceType,
+          lastSeen: new Date()
+        })
+      }).catch(error => console.error('Failed to set user offline:', error))
+
+      pusherClient.disconnect()
+      setPusher(null)
       setIsConnected(false)
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current)
@@ -224,7 +250,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
 
   const value: PresenceContextType = {
     userPresence,
-    socket,
+    pusher,
     isConnected,
   }
 

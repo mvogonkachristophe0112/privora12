@@ -33,7 +33,7 @@ interface Connection {
 export default function Connections() {
    const { data: session } = useSession()
    const router = useRouter()
-   const { userPresence, socket } = usePresence()
+   const { userPresence, pusher } = usePresence()
 
    // Helper function to get user presence status
    const getUserPresence = (email: string) => {

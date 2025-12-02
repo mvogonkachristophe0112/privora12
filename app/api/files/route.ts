@@ -4,6 +4,7 @@ import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
 import { put } from '@vercel/blob'
 import { encryptFile } from "@/lib/crypto"
+import { triggerPusherEvent } from "@/lib/pusher"
 
 export async function GET() {
   try {
@@ -93,7 +94,7 @@ export async function POST(request: NextRequest) {
     // Handle sharing if recipients are provided
     if (shareMode === 'share' && recipients.length > 0) {
       for (const email of recipients) {
-        // Create share record (you might want to implement user lookup)
+        // Create share record
         await prisma.fileShare.create({
           data: {
             fileId: newFile.id,
@@ -101,6 +102,16 @@ export async function POST(request: NextRequest) {
             permissions: 'view', // Default permission
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
           }
+        })
+
+        // Trigger Pusher event for file sharing notification
+        await triggerPusherEvent(`user-${email}`, 'file-shared', {
+          fileId: newFile.id,
+          fileName: newFile.name,
+          sharedBy: session.user.email,
+          sharedAt: new Date(),
+          url: newFile.url,
+          encrypted: newFile.encrypted
         })
       }
     }
