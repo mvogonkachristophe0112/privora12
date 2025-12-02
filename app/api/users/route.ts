@@ -8,10 +8,15 @@ export async function GET() {
     const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
     if (!session?.user?.email) {
+      console.error('No session or email:', { session })
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     const prisma = await getPrismaClient()
+    if (!prisma) {
+      console.error('Prisma client not available')
+      return NextResponse.json({ error: "Database connection failed" }, { status: 500 })
+    }
     const users = await prisma.user.findMany({
       where: {
         emailVerified: { not: null }, // Only show verified users
