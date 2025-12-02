@@ -109,47 +109,8 @@ export default function Connections() {
   const [error, setError] = useState<string | null>(null)
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
   const [actionMode, setActionMode] = useState<"send" | "receive" | null>(null)
-  const [connectionRequests, setConnectionRequests] = useState<Connection[]>([])
 
-  const fetchConnections = async () => {
-    if (!session) return
 
-    try {
-      const response = await fetch('/api/connections')
-      if (response.ok) {
-        const connectionsData = await response.json()
-        setConnections(connectionsData)
-
-        const pendingRequests = connectionsData.filter((conn: Connection) =>
-          conn.status === 'pending' && conn.connectedTo === session.user.email
-        )
-        setConnectionRequests(pendingRequests)
-      }
-    } catch (error) {
-      console.error('Error fetching connections:', error)
-    }
-  }
-
-  // Listen for connection-related socket events
-  useEffect(() => {
-    if (!socket) return
-
-    const handleConnectionRequest = () => {
-      fetchConnections()
-    }
-
-    const handleConnectionAccepted = () => {
-      fetchConnections()
-    }
-
-    socket.on('connection-request', handleConnectionRequest)
-    socket.on('connection-accepted', handleConnectionAccepted)
-
-    return () => {
-      socket.off('connection-request', handleConnectionRequest)
-      socket.off('connection-accepted', handleConnectionAccepted)
-    }
-  }, [socket])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -178,10 +139,6 @@ export default function Connections() {
         setConnections(connectionsData)
 
         // Filter pending connection requests
-        const pendingRequests = connectionsData.filter((conn: Connection) =>
-          conn.status === 'pending' && conn.connectedTo === session.user.email
-        )
-        setConnectionRequests(pendingRequests)
 
       } catch (err) {
         console.error('Error fetching data:', err)
@@ -225,103 +182,7 @@ export default function Connections() {
     setActionMode(null)
   }
 
-  const handleAddConnection = async (targetEmail: string) => {
-    try {
-      const response = await fetch('/api/connections', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ targetEmail }),
-      })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || 'Failed to send connection request')
-      }
-
-      // Emit socket event for real-time notification
-      if (socket) {
-        socket.emit('request-connection', {
-          fromUserId: session?.user?.id,
-          toUserEmail: targetEmail,
-        })
-      }
-
-      alert('Connection request sent successfully!')
-      fetchConnections()
-    } catch (error) {
-      console.error('Error adding connection:', error)
-      alert(`Failed to send connection request: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    }
-  }
-
-  const handleAcceptConnection = async (connectionId: string) => {
-    try {
-      const response = await fetch(`/api/connections/${connectionId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ action: 'accept' }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to accept connection')
-      }
-
-      // Emit socket event for real-time notification
-      if (socket) {
-        socket.emit('accept-connection', {
-          userId: session?.user?.id,
-          requesterEmail: connectionRequests.find(c => c.id === connectionId)?.userId,
-        })
-      }
-
-      alert('Connection accepted!')
-      fetchConnections()
-    } catch (error) {
-      console.error('Error accepting connection:', error)
-      alert(`Failed to accept connection: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    }
-  }
-
-  const handleRejectConnection = async (connectionId: string) => {
-    try {
-      const response = await fetch(`/api/connections/${connectionId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ action: 'reject' }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to reject connection')
-      }
-
-      alert('Connection request rejected')
-      fetchConnections()
-    } catch (error) {
-      console.error('Error rejecting connection:', error)
-      alert(`Failed to reject connection: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    }
-  }
-
-  // Remove this function - we'll use the hook directly in the component
-
-  const isConnected = (email: string) => {
-    return connections.some(conn =>
-      (conn.userId === session?.user?.id && conn.connectedTo === email && conn.status === 'accepted') ||
-      (conn.connectedTo === session?.user?.email && conn.userId === email && conn.status === 'accepted')
-    )
-  }
-
-  const hasPendingRequest = (email: string) => {
-    return connections.some(conn =>
-      conn.userId === session?.user?.id && conn.connectedTo === email && conn.status === 'pending'
-    )
-  }
 
   if (!session) {
     return <div className="min-h-screen flex items-center justify-center">Please login to view connections</div>
@@ -364,7 +225,7 @@ export default function Connections() {
             <div>
               <h1 className="text-2xl md:text-3xl font-bold">User Directory</h1>
               <p className="text-gray-600 dark:text-gray-400 mt-2">
-                All signed-in users are automatically visible here. Share files and connect directly.
+                All signed-in users are automatically connected. Share files and communicate directly.
               </p>
             </div>
             <div className="text-sm text-gray-500">
@@ -442,53 +303,6 @@ export default function Connections() {
             )}
           </div>
 
-          {/* Connection Requests */}
-          {connectionRequests.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 mb-6">
-              <h2 className="text-lg md:text-xl font-semibold mb-4">Connection Requests</h2>
-              <div className="space-y-3">
-                {connectionRequests.map((request) => (
-                  <div key={request.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
-                        {request.user.image ? (
-                          <img
-                            src={request.user.image}
-                            alt={request.user.name || request.user.email}
-                            className="w-10 h-10 rounded-full object-cover"
-                          />
-                        ) : (
-                          (request.user.name || request.user.email).charAt(0).toUpperCase()
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium text-sm md:text-base">
-                          {request.user.name || request.user.email.split('@')[0]}
-                        </p>
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          {request.user.email}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleAcceptConnection(request.id)}
-                        className="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
-                      >
-                        Accept
-                      </button>
-                      <button
-                        onClick={() => handleRejectConnection(request.id)}
-                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Users Directory */}
           {users.length === 0 ? (
@@ -580,41 +394,15 @@ export default function Connections() {
                       </button>
                     </div>
 
-                    {/* Optional connection request for closer relationships */}
-                    {!isConnected(user.email) && !hasPendingRequest(user.email) && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleAddConnection(user.email)
-                        }}
-                        className="w-full bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
-                      >
-                        Add to Connections
-                      </button>
-                    )}
-
-                    {isConnected(user.email) && (
-                      <div className="flex items-center justify-center">
-                        <span className="text-green-600 dark:text-green-400 text-sm font-medium flex items-center gap-2">
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                          Connected
-                        </span>
-                      </div>
-                    )}
-
-                    {hasPendingRequest(user.email) && (
-                      <div className="flex items-center justify-center">
-                        <span className="text-yellow-600 dark:text-yellow-400 text-sm font-medium flex items-center gap-2">
-                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          Request Pending
-                        </span>
-                      </div>
-                    )}
+                    {/* All users are automatically connected */}
+                    <div className="flex items-center justify-center">
+                      <span className="text-green-600 dark:text-green-400 text-sm font-medium flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Connected
+                      </span>
+                    </div>
                   </div>
 
                   {actionMode === "send" && (
