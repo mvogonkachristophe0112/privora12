@@ -185,7 +185,7 @@ export default function Connections() {
 
       } catch (err) {
         console.error('Error fetching data:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load data')
+        setError(`Failed to fetch data: ${err instanceof Error ? err.message : 'Unknown error'}`)
       } finally {
         setLoading(false)
       }

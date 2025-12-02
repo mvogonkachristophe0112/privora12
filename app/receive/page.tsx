@@ -48,7 +48,7 @@ export default function Receive() {
         setReceivedFiles(files)
       } catch (err) {
         console.error('Error fetching received files:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load files')
+        setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
       } finally {
         setLoading(false)
       }
