@@ -121,21 +121,13 @@ export default function Connections() {
         setError(null)
 
         // Fetch users and connections in parallel
-        console.log('Fetching users and connections...')
         const [usersResponse, connectionsResponse] = await Promise.all([
           fetch('/api/users'),
           fetch('/api/connections'),
         ])
 
-        console.log('Users response:', usersResponse.status, usersResponse.ok)
-        console.log('Connections response:', connectionsResponse.status, connectionsResponse.ok)
-
         if (!usersResponse.ok || !connectionsResponse.ok) {
-          const usersError = usersResponse.ok ? null : await usersResponse.text()
-          const connectionsError = connectionsResponse.ok ? null : await connectionsResponse.text()
-          console.error('Users error:', usersError)
-          console.error('Connections error:', connectionsError)
-          throw new Error(`Failed to fetch data: Users ${usersResponse.status}, Connections ${connectionsResponse.status}`)
+          throw new Error('Failed to fetch data')
         }
 
         const [usersData, connectionsData] = await Promise.all([
