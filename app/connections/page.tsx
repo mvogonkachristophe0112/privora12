@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
-import { usePresence, useUserPresence } from "@/lib/presence-context"
+import { usePresence } from "@/lib/presence-context"
 
 interface User {
   id: string
@@ -31,9 +31,78 @@ interface Connection {
 }
 
 export default function Connections() {
-  const { data: session } = useSession()
-  const router = useRouter()
-  const { userPresence, socket } = usePresence()
+   const { data: session } = useSession()
+   const router = useRouter()
+   const { userPresence, socket } = usePresence()
+
+   // Helper function to get user presence status
+   const getUserPresence = (email: string) => {
+     const presence = userPresence[email]
+     if (presence?.isOnline) {
+       return {
+         status: 'online',
+         text: 'Online',
+         color: 'text-green-600',
+         dotColor: 'bg-green-500',
+         deviceType: presence.deviceType,
+         lastSeen: presence.lastSeen
+       }
+     } else if (presence) {
+       const lastSeen = new Date(presence.lastSeen)
+       const now = new Date()
+       const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
+
+       if (diffMinutes < 1) {
+         return {
+           status: 'away',
+           text: 'Last seen just now',
+           color: 'text-gray-500',
+           dotColor: 'bg-gray-400',
+           deviceType: presence.deviceType,
+           lastSeen: presence.lastSeen
+         }
+       }
+       if (diffMinutes < 60) {
+         return {
+           status: 'away',
+           text: `Last seen ${diffMinutes}m ago`,
+           color: 'text-gray-500',
+           dotColor: 'bg-gray-400',
+           deviceType: presence.deviceType,
+           lastSeen: presence.lastSeen
+         }
+       }
+
+       const diffHours = Math.floor(diffMinutes / 60)
+       if (diffHours < 24) {
+         return {
+           status: 'away',
+           text: `Last seen ${diffHours}h ago`,
+           color: 'text-gray-500',
+           dotColor: 'bg-gray-400',
+           deviceType: presence.deviceType,
+           lastSeen: presence.lastSeen
+         }
+       }
+
+       return {
+         status: 'offline',
+         text: `Last seen ${lastSeen.toLocaleDateString()}`,
+         color: 'text-gray-400',
+         dotColor: 'bg-gray-300',
+         deviceType: presence.deviceType,
+         lastSeen: presence.lastSeen
+       }
+     }
+     return {
+       status: 'offline',
+       text: 'Offline',
+       color: 'text-gray-400',
+       dotColor: 'bg-gray-300',
+       deviceType: 'desktop' as const,
+       lastSeen: new Date()
+     }
+   }
   const [users, setUsers] = useState<User[]>([])
   const [connections, setConnections] = useState<Connection[]>([])
   const [loading, setLoading] = useState(true)
@@ -239,9 +308,7 @@ export default function Connections() {
     }
   }
 
-  const getUserStatus = (email: string) => {
-    return useUserPresence(email)
-  }
+  // Remove this function - we'll use the hook directly in the component
 
   const isConnected = (email: string) => {
     return connections.some(conn =>
@@ -458,7 +525,7 @@ export default function Connections() {
                         )}
                       </div>
                       {/* Online status indicator */}
-                      <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800 ${getUserStatus(user.email).dotColor}`}></div>
+                      <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800 ${getUserPresence(user.email).dotColor}`}></div>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
@@ -467,18 +534,18 @@ export default function Connections() {
                         </h3>
                         {/* Device indicator */}
                         <span className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                          {getUserStatus(user.email).deviceType === 'phone' && '📱'}
-                          {getUserStatus(user.email).deviceType === 'laptop' && '💻'}
-                          {getUserStatus(user.email).deviceType === 'tablet' && '📱'}
-                          {getUserStatus(user.email).deviceType === 'desktop' && '🖥️'}
-                          {getUserStatus(user.email).deviceType}
+                          {getUserPresence(user.email).deviceType === 'phone' && '📱'}
+                          {getUserPresence(user.email).deviceType === 'laptop' && '💻'}
+                          {getUserPresence(user.email).deviceType === 'tablet' && '📱'}
+                          {getUserPresence(user.email).deviceType === 'desktop' && '🖥️'}
+                          {getUserPresence(user.email).deviceType}
                         </span>
                       </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400 truncate mb-1">
                         {user.email}
                       </p>
-                      <p className={`text-xs ${getUserStatus(user.email).color}`}>
-                        {getUserStatus(user.email).text}
+                      <p className={`text-xs ${getUserPresence(user.email).color}`}>
+                        {getUserPresence(user.email).text}
                       </p>
                     </div>
                   </div>

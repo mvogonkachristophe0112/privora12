@@ -32,6 +32,7 @@ export async function GET() {
       acc[presence.user.email] = {
         isOnline: presence.isOnline,
         lastSeen: presence.lastSeen,
+        deviceType: presence.deviceType || 'desktop',
         user: presence.user,
       }
       return acc
