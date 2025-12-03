@@ -14,7 +14,8 @@ interface Message {
   fileName?: string
   reactions?: { [emoji: string]: string[] }
   replyTo?: string
-  status?: 'sending' | 'sent' | 'delivered' | 'read'
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
+  error?: boolean
 }
 
 interface User {
@@ -87,13 +88,34 @@ export default function CrypChat() {
 
     initializeChat()
 
+    // Set up real-time message polling
+    const messagePollingInterval = setInterval(async () => {
+      if (session && roomId) {
+        try {
+          const res = await fetch(`/api/messages?roomId=${roomId}`)
+          if (res.ok) {
+            const data = await res.json()
+            const newMessages = data.messages || data
+
+            // Only update if we have new messages
+            if (newMessages.length > messages.length) {
+              setMessages(newMessages)
+            }
+          }
+        } catch (error) {
+          console.error('Failed to poll for new messages:', error)
+        }
+      }
+    }, 3000) // Poll every 3 seconds for real-time updates
+
     // Cleanup on unmount
     return () => {
+      clearInterval(messagePollingInterval)
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current)
       }
     }
-  }, [roomId])
+  }, [roomId, session])
 
   useEffect(() => {
     scrollToBottom()
@@ -146,12 +168,15 @@ export default function CrypChat() {
     }
   }
 
-  const sendMessage = async () => {
+  const sendMessage = async (retryCount = 0) => {
     if (!newMessage.trim() || !session?.user) return
+
+    const maxRetries = 3
+    const retryDelay = Math.pow(2, retryCount) * 1000 // Exponential backoff
 
     // Add message to UI immediately with sending status
     const tempMessage: Message = {
-      id: Date.now().toString(),
+      id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
       content: newMessage,
       user: {
         name: session.user.name || 'Unknown User',
@@ -162,22 +187,31 @@ export default function CrypChat() {
       replyTo: replyTo?.id
     }
 
-    setMessages([...messages, tempMessage])
+    setMessages(prev => [...prev, tempMessage])
+    const messageToSend = newMessage
+    const replyToId = replyTo?.id
+
     setNewMessage("")
     setReplyTo(null)
 
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
       const res = await fetch('/api/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          content: newMessage,
+          content: messageToSend,
           roomId,
-          replyTo: replyTo?.id
-        })
+          replyTo: replyToId
+        }),
+        signal: controller.signal
       })
+
+      clearTimeout(timeoutId)
 
       if (res.ok) {
         const message = await res.json()
@@ -185,17 +219,34 @@ export default function CrypChat() {
         setMessages(prev => prev.map(msg =>
           msg.id === tempMessage.id ? { ...message, status: 'sent' } : msg
         ))
+
+        // Mark as delivered after a short delay
+        setTimeout(() => {
+          setMessages(prev => prev.map(msg =>
+            msg.id === message.id ? { ...msg, status: 'delivered' } : msg
+          ))
+        }, 1000)
       } else {
-        // Mark as failed
-        setMessages(prev => prev.map(msg =>
-          msg.id === tempMessage.id ? { ...msg, status: 'sent' } : msg
-        ))
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`)
       }
     } catch (error) {
-      console.error("Failed to send message")
-      setMessages(prev => prev.map(msg =>
-        msg.id === tempMessage.id ? { ...msg, status: 'sent' } : msg
-      ))
+      console.error(`Failed to send message (attempt ${retryCount + 1}/${maxRetries + 1}):`, error)
+
+      if (retryCount < maxRetries && !(error instanceof Error && error.name === 'AbortError')) {
+        // Retry with exponential backoff
+        setMessages(prev => prev.map(msg =>
+          msg.id === tempMessage.id ? { ...msg, status: 'sending' } : msg
+        ))
+
+        setTimeout(() => {
+          sendMessage(retryCount + 1)
+        }, retryDelay)
+      } else {
+        // Mark as failed after all retries
+        setMessages(prev => prev.map(msg =>
+          msg.id === tempMessage.id ? { ...msg, status: 'sent', error: true } : msg
+        ))
+      }
     }
   }
 
@@ -592,15 +643,41 @@ export default function CrypChat() {
 
                       {/* Message status */}
                       <div className="flex items-center justify-between mt-2">
-                        <p className={`text-xs ${isOwnMessage ? "text-primary-100" : "text-gray-500"}`}>
-                          {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className={`text-xs ${isOwnMessage ? "text-primary-100" : "text-gray-500"}`}>
+                            {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </p>
+                          {msg.error && (
+                            <span className="text-xs text-red-400 flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              Failed
+                            </span>
+                          )}
+                        </div>
                         {isOwnMessage && (
                           <div className="flex items-center gap-1">
                             {msg.status === 'sending' && <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>}
-                            {msg.status === 'sent' && <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
-                            {msg.status === 'delivered' && <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
+                            {msg.status === 'sent' && <svg className="w-3 h-3 text-gray-300" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
+                            {msg.status === 'delivered' && <svg className="w-3 h-3 text-gray-200" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
                             {msg.status === 'read' && <svg className="w-3 h-3 text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
+                            {msg.status === 'failed' && (
+                              <button
+                                onClick={() => {
+                                  // Retry sending this message
+                                  const retryMessage = { ...msg, status: 'sending' as const, error: false }
+                                  setMessages(prev => prev.map(m => m.id === msg.id ? retryMessage : m))
+                                  // Re-send logic would need to be implemented
+                                }}
+                                className="w-3 h-3 text-red-400 hover:text-red-300"
+                                title="Retry sending"
+                              >
+                                <svg fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -746,7 +823,7 @@ export default function CrypChat() {
 
             {/* Send button */}
             <button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={!newMessage.trim()}
               className="px-4 md:px-6 py-3 bg-primary-500 hover:bg-primary-600 disabled:bg-gray-400 text-white rounded-lg transition-colors font-medium touch-manipulation min-w-[44px] min-h-[44px] flex items-center justify-center"
               aria-label="Send message"

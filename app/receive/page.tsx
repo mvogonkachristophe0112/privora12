@@ -32,6 +32,11 @@ export default function Receive() {
   const [deletingFile, setDeletingFile] = useState<ReceivedFile | null>(null)
   const [viewingFile, setViewingFile] = useState<ReceivedFile | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null) // Track which file is being acted upon
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
+  const [searchQuery, setSearchQuery] = useState("")
+  const [filterType, setFilterType] = useState<string>("all")
+  const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
   useEffect(() => {
     const fetchReceivedFiles = async () => {
@@ -241,6 +246,88 @@ export default function Receive() {
     window.location.href = '/connections'
   }
 
+  // Filtering and sorting logic
+  const filteredAndSortedFiles = receivedFiles
+    .filter(file => {
+      const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          file.senderEmail.toLowerCase().includes(searchQuery.toLowerCase())
+      const matchesType = filterType === "all" ||
+                         (filterType === "encrypted" && file.encrypted) ||
+                         (filterType === "documents" && file.type.includes("document")) ||
+                         (filterType === "images" && file.type.includes("image")) ||
+                         (filterType === "videos" && file.type.includes("video"))
+      return matchesSearch && matchesType
+    })
+    .sort((a, b) => {
+      let comparison = 0
+      switch (sortBy) {
+        case "name":
+          comparison = a.name.localeCompare(b.name)
+          break
+        case "size":
+          comparison = a.size - b.size
+          break
+        case "date":
+        default:
+          comparison = new Date(a.sharedAt).getTime() - new Date(b.sharedAt).getTime()
+          break
+      }
+      return sortOrder === "asc" ? comparison : -comparison
+    })
+
+  // Bulk actions
+  const handleSelectFile = (fileId: string) => {
+    const newSelected = new Set(selectedFiles)
+    if (newSelected.has(fileId)) {
+      newSelected.delete(fileId)
+    } else {
+      newSelected.add(fileId)
+    }
+    setSelectedFiles(newSelected)
+  }
+
+  const handleSelectAll = () => {
+    if (selectedFiles.size === filteredAndSortedFiles.length) {
+      setSelectedFiles(new Set())
+    } else {
+      setSelectedFiles(new Set(filteredAndSortedFiles.map(f => f.id)))
+    }
+  }
+
+  const handleBulkDownload = async () => {
+    for (const fileId of selectedFiles) {
+      const file = receivedFiles.find(f => f.id === fileId)
+      if (file) {
+        await handleDownload(file)
+      }
+    }
+    setSelectedFiles(new Set())
+  }
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedFiles.size} files? This action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      setActionLoading("bulk-delete")
+      const deletePromises = Array.from(selectedFiles).map(fileId =>
+        fetch(`/api/files/received/${fileId}`, { method: 'DELETE' })
+      )
+
+      await Promise.all(deletePromises)
+
+      // Remove from local state
+      setReceivedFiles(prev => prev.filter(f => !selectedFiles.has(f.id)))
+      setSelectedFiles(new Set())
+    } catch (error) {
+      console.error('Bulk delete error:', error)
+      alert('Some files could not be deleted. Please try again.')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   if (!session) {
     return <div className="min-h-screen flex items-center justify-center">Please login to view received files</div>
   }
@@ -278,20 +365,99 @@ export default function Receive() {
     <div className="min-h-screen bg-background text-foreground">
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
-            <h1 className="text-2xl md:text-3xl font-bold">Received Files</h1>
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-500">
-                {receivedFiles.length} files received
+          <div className="flex flex-col gap-6 mb-8">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <h1 className="text-2xl md:text-3xl font-bold">Received Files</h1>
+              <div className="flex items-center gap-4">
+                <div className="text-sm text-gray-500">
+                  {filteredAndSortedFiles.length} of {receivedFiles.length} files
+                </div>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded-lg transition-colors text-sm touch-manipulation"
+                  title="Refresh files"
+                >
+                  🔄 Refresh
+                </button>
               </div>
-              <button
-                onClick={() => window.location.reload()}
-                className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded-lg transition-colors text-sm touch-manipulation"
-                title="Refresh files"
-              >
-                🔄 Refresh
-              </button>
             </div>
+
+            {/* Search and Filter Controls */}
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <input
+                  type="text"
+                  placeholder="Search files by name or sender..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                />
+              </div>
+              <div className="flex gap-2">
+                <select
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                >
+                  <option value="all">All Files</option>
+                  <option value="encrypted">Encrypted</option>
+                  <option value="documents">Documents</option>
+                  <option value="images">Images</option>
+                  <option value="videos">Videos</option>
+                </select>
+                <select
+                  value={`${sortBy}-${sortOrder}`}
+                  onChange={(e) => {
+                    const [sort, order] = e.target.value.split('-')
+                    setSortBy(sort as "date" | "name" | "size")
+                    setSortOrder(order as "asc" | "desc")
+                  }}
+                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                >
+                  <option value="date-desc">Newest First</option>
+                  <option value="date-asc">Oldest First</option>
+                  <option value="name-asc">Name A-Z</option>
+                  <option value="name-desc">Name Z-A</option>
+                  <option value="size-desc">Largest First</option>
+                  <option value="size-asc">Smallest First</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Bulk Actions */}
+            {selectedFiles.size > 0 && (
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                      {selectedFiles.size} file{selectedFiles.size !== 1 ? 's' : ''} selected
+                    </span>
+                    <button
+                      onClick={() => setSelectedFiles(new Set())}
+                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 text-sm underline"
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleBulkDownload}
+                      disabled={actionLoading === "bulk-download"}
+                      className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
+                    >
+                      {actionLoading === "bulk-download" ? "Downloading..." : "Download Selected"}
+                    </button>
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={actionLoading === "bulk-delete"}
+                      className="bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
+                    >
+                      {actionLoading === "bulk-delete" ? "Deleting..." : "Delete Selected"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {receivedFiles.length === 0 ? (
@@ -309,54 +475,78 @@ export default function Receive() {
               </button>
             </div>
           ) : (
-            <div className="grid gap-4">
-              {receivedFiles.map((file) => (
-                <div key={file.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 hover:shadow-xl transition-shadow">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <div className="text-2xl md:text-3xl">{getFileIcon(file.type)}</div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-base md:text-lg font-semibold truncate">{file.name}</h3>
-                        <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400">
-                          From {file.senderEmail} • {formatFileSize(file.size)} • {formatDate(file.sharedAt)}
-                        </p>
+            <div className="space-y-4">
+              {/* Select All Checkbox */}
+              {filteredAndSortedFiles.length > 0 && (
+                <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                  <input
+                    type="checkbox"
+                    checked={selectedFiles.size === filteredAndSortedFiles.length && filteredAndSortedFiles.length > 0}
+                    onChange={handleSelectAll}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Select All ({filteredAndSortedFiles.length} files)
+                  </label>
+                </div>
+              )}
+
+              <div className="grid gap-4">
+                {filteredAndSortedFiles.map((file) => (
+                  <div key={file.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 hover:shadow-xl transition-shadow">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        {/* File Selection Checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={selectedFiles.has(file.id)}
+                          onChange={() => handleSelectFile(file.id)}
+                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                        />
+                        <div className="text-2xl md:text-3xl">{getFileIcon(file.type)}</div>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-base md:text-lg font-semibold truncate">{file.name}</h3>
+                          <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400">
+                            From {file.senderEmail} • {formatFileSize(file.size)} • {formatDate(file.sharedAt)}
+                          </p>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                      {file.encrypted && (
-                        <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs font-medium self-start sm:self-center">
-                          🔒 Encrypted
-                        </span>
-                      )}
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                        {file.encrypted && (
+                          <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs font-medium self-start sm:self-center">
+                            🔒 Encrypted
+                          </span>
+                        )}
 
-                      <div className="flex gap-2 w-full sm:w-auto">
-                        <button
-                          onClick={() => handleDownload(file)}
-                          disabled={actionLoading === file.id}
-                          className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
-                        >
-                          {actionLoading === file.id ? "Processing..." : "Download"}
-                        </button>
-                        <button
-                          onClick={() => handleView(file)}
-                          disabled={actionLoading === file.id}
-                          className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
-                        >
-                          {actionLoading === file.id ? "Loading..." : "View"}
-                        </button>
-                        <button
-                          onClick={() => handleDelete(file)}
-                          disabled={actionLoading === file.id}
-                          className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
-                        >
-                          {actionLoading === file.id ? "Deleting..." : "Delete"}
-                        </button>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                          <button
+                            onClick={() => handleDownload(file)}
+                            disabled={actionLoading === file.id}
+                            className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                          >
+                            {actionLoading === file.id ? "Processing..." : "Download"}
+                          </button>
+                          <button
+                            onClick={() => handleView(file)}
+                            disabled={actionLoading === file.id}
+                            className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                          >
+                            {actionLoading === file.id ? "Loading..." : "View"}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(file)}
+                            disabled={actionLoading === file.id}
+                            className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                          >
+                            {actionLoading === file.id ? "Deleting..." : "Delete"}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 
