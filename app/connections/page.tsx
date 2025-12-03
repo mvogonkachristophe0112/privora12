@@ -198,6 +198,24 @@ export default function Connections() {
     setActionMode(null)
   }
 
+  const handleStartDirectMessage = (targetEmail: string) => {
+    if (!session?.user?.email) return
+
+    // Create a unique room ID for the conversation between current user and target user
+    const participants = [session.user.email, targetEmail].sort()
+    const roomId = `dm-${participants.join('-').replace(/[@.]/g, '-')}`
+
+    // Store the room info in sessionStorage for the chat page
+    sessionStorage.setItem('directMessageRoom', JSON.stringify({
+      roomId,
+      participants,
+      targetUser: users.find(u => u.email === targetEmail)
+    }))
+
+    // Navigate to CrypChat with the direct message room
+    router.push(`/crychat?room=${roomId}`)
+  }
+
 
 
   if (!session) {
@@ -402,7 +420,7 @@ export default function Connections() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          // Could implement direct messaging or other actions
+                          handleStartDirectMessage(user.email)
                         }}
                         className="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
                       >

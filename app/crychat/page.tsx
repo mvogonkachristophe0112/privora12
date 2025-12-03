@@ -41,6 +41,8 @@ export default function CrypChat() {
   const [activeUsers, setActiveUsers] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isDirectMessage, setIsDirectMessage] = useState(false)
+  const [directMessageTarget, setDirectMessageTarget] = useState<User | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -49,6 +51,27 @@ export default function CrypChat() {
       try {
         setIsLoading(true)
         setError(null)
+
+        // Check if this is a direct message from URL or sessionStorage
+        const urlParams = new URLSearchParams(window.location.search)
+        const roomParam = urlParams.get('room')
+
+        if (roomParam && roomParam.startsWith('dm-')) {
+          // This is a direct message
+          setIsDirectMessage(true)
+          setRoomId(roomParam)
+
+          // Check sessionStorage for target user info
+          const dmInfo = sessionStorage.getItem('directMessageRoom')
+          if (dmInfo) {
+            const { targetUser } = JSON.parse(dmInfo)
+            setDirectMessageTarget(targetUser)
+            sessionStorage.removeItem('directMessageRoom') // Clean up
+          }
+        } else {
+          setIsDirectMessage(false)
+          setDirectMessageTarget(null)
+        }
 
         await Promise.all([
           fetchMessages(),
@@ -478,9 +501,17 @@ export default function CrypChat() {
                 </svg>
               </button>
               <div>
-                <h1 className="text-lg md:text-xl font-bold capitalize">{roomId} Room</h1>
+                <h1 className="text-lg md:text-xl font-bold">
+                  {isDirectMessage && directMessageTarget
+                    ? `Chat with ${directMessageTarget.name || directMessageTarget.email.split('@')[0]}`
+                    : `${roomId} Room`
+                  }
+                </h1>
                 <p className="text-xs md:text-sm text-gray-500">
-                  {activeUsers} online • {messages.length} messages
+                  {isDirectMessage
+                    ? `${messages.length} messages`
+                    : `${activeUsers} online • ${messages.length} messages`
+                  }
                 </p>
               </div>
             </div>
