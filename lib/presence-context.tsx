@@ -121,9 +121,10 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
     }
   }, [lastActivity, session])
 
+  // Effect to handle user authentication and presence initialization
   useEffect(() => {
     if (status !== 'authenticated' || !session?.user?.id) {
-      // Clean up Supabase connection when user logs out
+      // Clean up when user logs out
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current)
         heartbeatIntervalRef.current = null
@@ -132,12 +133,28 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    // Only initialize Supabase on client side
+    // Only initialize on client side
     if (typeof window === 'undefined') return
 
     setIsConnected(true)
 
-    // Subscribe to presence updates via polling (Supabase real-time would require database changes)
+    // Immediately fetch presence data when user logs in
+    const fetchInitialPresence = async () => {
+      try {
+        const response = await fetch('/api/presence')
+        if (response.ok) {
+          const presenceData = await response.json()
+          setUserPresence(presenceData)
+        }
+      } catch (error) {
+        console.error('Failed to fetch initial presence:', error)
+      }
+    }
+
+    // Fetch immediately when user logs in
+    fetchInitialPresence()
+
+    // Then poll for updates
     const presenceInterval = setInterval(async () => {
       try {
         const response = await fetch('/api/presence')

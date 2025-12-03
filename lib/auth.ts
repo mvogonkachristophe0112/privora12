@@ -60,6 +60,26 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           session.user.role = token.role as string
         }
         return session
+      },
+      async signIn({ user, account, profile }) {
+        // When user signs in, ensure they're marked as verified and update presence
+        if (user?.email) {
+          try {
+            // Update user's last login time and ensure they're verified
+            await prisma.user.update({
+              where: { email: user.email },
+              data: {
+                emailVerified: new Date(),
+                // You could add a lastLogin field here if you want to track it
+              }
+            })
+
+            console.log(`User ${user.email} signed in and marked as verified`)
+          } catch (error) {
+            console.error('Error updating user on sign in:', error)
+          }
+        }
+        return true
       }
     },
     pages: {

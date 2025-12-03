@@ -149,6 +149,22 @@ export default function Connections() {
     }
 
     fetchData()
+
+    // Set up periodic refresh to detect new users who sign in
+    const refreshInterval = setInterval(() => {
+      if (session) {
+        fetch('/api/users')
+          .then(response => response.ok ? response.json() : [])
+          .then(usersData => {
+            setUsers(usersData)
+          })
+          .catch(error => {
+            console.error('Error refreshing users:', error)
+          })
+      }
+    }, 10000) // Refresh every 10 seconds to catch new sign-ins
+
+    return () => clearInterval(refreshInterval)
   }, [session])
 
   const toggleUserSelection = (userId: string) => {
