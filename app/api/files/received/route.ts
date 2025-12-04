@@ -43,9 +43,29 @@ export async function GET(request: NextRequest) {
     const totalShares = await prisma.fileShare.count()
     console.log('Total FileShare records in database:', totalShares)
 
+    // Get current user ID for additional validation
+    const currentUser = await prisma.user.findUnique({
+      where: { email: normalizedUserEmail },
+      select: { id: true }
+    })
+
+    if (!currentUser) {
+      console.log('Current user not found in database')
+      return NextResponse.json([])
+    }
+
+    console.log('Current user ID:', currentUser.id)
+
     // Debug: Check shares for this user by email
     const userSharesByEmail = await prisma.fileShare.findMany({
-      where: { sharedWithEmail: normalizedUserEmail },
+      where: {
+        sharedWithEmail: normalizedUserEmail,
+        revoked: false,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } }
+        ]
+      },
       include: { file: true, user: true }
     })
     console.log('FileShare records for this user by email:', userSharesByEmail.length)

@@ -9,43 +9,91 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const authOptions = await getAuthOptions()
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
     const { searchParams } = new URL(request.url)
     const decryptionKey = searchParams.get('key')
+    const shareToken = searchParams.get('shareToken')
 
     const prisma = await getPrismaClient()
     const resolvedParams = await params
     const fileId = resolvedParams.id
 
-    // Check if user owns the file or has access via sharing
-    const file = await prisma.file.findFirst({
-      where: {
-        id: fileId,
-        OR: [
-          { userId: session.user.id }, // Owner
-          {
-            shares: {
-              some: {
-                sharedWithEmail: session.user.email,
-                revoked: false,
-                OR: [
-                  { expiresAt: null },
-                  { expiresAt: { gt: new Date() } }
-                ]
+    let file
+    let hasAccess = false
+    let sharePermissions = 'view'
+
+    // Check if accessing via share token (public access)
+    if (shareToken) {
+      console.log('Download via share token:', shareToken)
+
+      const fileShare = await prisma.fileShare.findFirst({
+        where: {
+          shareToken: shareToken,
+          fileId: fileId,
+          revoked: false,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } }
+          ]
+        },
+        include: { file: true }
+      })
+
+      if (fileShare) {
+        file = fileShare.file
+        hasAccess = true
+        sharePermissions = fileShare.permissions
+        console.log('Share token valid, permissions:', sharePermissions)
+      } else {
+        console.log('Invalid or expired share token')
+        return NextResponse.json({ error: "Invalid or expired share link" }, { status: 403 })
+      }
+    } else {
+      // Authenticated user access
+      const authOptions = await getAuthOptions()
+      const session = await getServerSession(authOptions)
+      if (!session?.user?.email) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      }
+
+      console.log('Download via authenticated user:', session.user.email)
+
+      // Check if user owns the file or has access via sharing
+      file = await prisma.file.findFirst({
+        where: {
+          id: fileId,
+          OR: [
+            { userId: session.user.id }, // Owner
+            {
+              shares: {
+                some: {
+                  sharedWithEmail: session.user.email.toLowerCase(),
+                  revoked: false,
+                  OR: [
+                    { expiresAt: null },
+                    { expiresAt: { gt: new Date() } }
+                  ]
+                }
               }
             }
-          }
-        ]
-      }
-    })
+          ]
+        }
+      })
 
-    if (!file) {
+      if (file) {
+        hasAccess = true
+        console.log('User has access to file')
+      } else {
+        console.log('User does not have access to file')
+      }
+    }
+
+    if (!file || !hasAccess) {
       return NextResponse.json({ error: "File not found or access denied" }, { status: 404 })
+    }
+
+    // Check download permissions for share links
+    if (shareToken && sharePermissions !== 'download' && sharePermissions !== 'view') {
+      return NextResponse.json({ error: "Insufficient permissions to download" }, { status: 403 })
     }
 
     // Fetch file from blob storage with timeout

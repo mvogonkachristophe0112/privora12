@@ -142,6 +142,9 @@ export async function POST(request: NextRequest) {
         console.log('Found recipient user:', recipientUser.id, recipientUser.email)
 
         try {
+          // Generate unique share token
+          const shareToken = `share_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
           // Create share record with sender information
           const share = await prisma.fileShare.create({
             data: {
@@ -149,6 +152,7 @@ export async function POST(request: NextRequest) {
               userId: session.user.id, // Sender ID
               sharedWithEmail: normalizedEmail, // Receiver email
               permissions: 'view', // Default permission
+              shareToken: shareToken, // Unique share link token
               expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
             }
           })
