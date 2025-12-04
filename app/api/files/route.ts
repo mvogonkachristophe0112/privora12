@@ -117,36 +117,64 @@ export async function POST(request: NextRequest) {
     if (shareMode === 'share' && recipients.length > 0) {
       console.log('Creating file shares for recipients:', recipients)
       const shareResults = []
+
       for (const email of recipients) {
         // Normalize email to lowercase for consistency
         const normalizedEmail = email.trim().toLowerCase()
         console.log('Processing recipient:', email, '-> normalized:', normalizedEmail)
 
+        // Validate that recipient exists as a user
+        const recipientUser = await prisma.user.findUnique({
+          where: { email: normalizedEmail },
+          select: { id: true, email: true, name: true }
+        })
+
+        if (!recipientUser) {
+          console.error('Recipient user not found:', normalizedEmail)
+          shareResults.push({
+            email: normalizedEmail,
+            success: false,
+            error: 'User not found'
+          })
+          continue
+        }
+
+        console.log('Found recipient user:', recipientUser.id, recipientUser.email)
+
         try {
-          // Create share record
+          // Create share record with sender information
           const share = await prisma.fileShare.create({
             data: {
               fileId: newFile.id,
-              sharedWithEmail: normalizedEmail,
+              userId: session.user.id, // Sender ID
+              sharedWithEmail: normalizedEmail, // Receiver email
               permissions: 'view', // Default permission
               expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
             }
           })
-          console.log('Successfully created file share for', normalizedEmail, ':', share.id)
 
-          // Emit real-time notification for file sharing
-          emitSocketEvent('file-shared', {
+          console.log('Successfully created file share:', {
+            shareId: share.id,
             fileId: newFile.id,
-            fileName: newFile.name,
-            senderEmail: session.user.email,
+            senderId: session.user.id,
             receiverEmail: normalizedEmail,
-            sharedAt: share.createdAt.toISOString(),
+            receiverUserId: recipientUser.id
           })
 
-          shareResults.push({ email: normalizedEmail, success: true, share })
+          shareResults.push({
+            email: normalizedEmail,
+            success: true,
+            share,
+            recipientUser
+          })
+
         } catch (shareError) {
-          console.error('Error creating file share for', email, '(', normalizedEmail, '):', shareError)
-          shareResults.push({ email: normalizedEmail, success: false, error: shareError })
+          console.error('Error creating file share for', normalizedEmail, ':', shareError)
+          shareResults.push({
+            email: normalizedEmail,
+            success: false,
+            error: shareError
+          })
         }
       }
 
@@ -155,11 +183,19 @@ export async function POST(request: NextRequest) {
       const failedShares = shareResults.filter(r => !r.success).length
       console.log(`File shares: ${successfulShares} successful, ${failedShares} failed`)
 
-      // Debug: Verify shares were created
-      const verifyShares = await prisma.fileShare.findMany({
-        where: { fileId: newFile.id }
-      })
-      console.log('Verification: Found', verifyShares.length, 'shares for file', newFile.id)
+      // Emit real-time notifications for successful shares
+      const successfulShareResults = shareResults.filter(r => r.success)
+      for (const result of successfulShareResults) {
+        emitSocketEvent('file-shared', {
+          fileId: newFile.id,
+          fileName: newFile.name,
+          senderEmail: session.user.email,
+          senderId: session.user.id,
+          receiverEmail: result.email,
+          receiverId: result.recipientUser.id,
+          sharedAt: new Date().toISOString(),
+        })
+      }
     }
 
     return NextResponse.json({

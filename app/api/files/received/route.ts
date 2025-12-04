@@ -37,20 +37,26 @@ export async function GET(request: NextRequest) {
     })
 
     const normalizedUserEmail = session.user.email.trim().toLowerCase()
-    console.log('Fetching received files for user:', session.user.email, 'normalized:', normalizedUserEmail)
+    console.log('Fetching received files for user:', session.user.email, 'normalized:', normalizedUserEmail, 'userId:', session.user.id)
 
     // Debug: Check if there are any FileShare records at all
     const totalShares = await prisma.fileShare.count()
     console.log('Total FileShare records in database:', totalShares)
 
-    // Debug: Check shares for this user
-    const userShares = await prisma.fileShare.findMany({
+    // Debug: Check shares for this user by email
+    const userSharesByEmail = await prisma.fileShare.findMany({
       where: { sharedWithEmail: normalizedUserEmail },
-      include: { file: true }
+      include: { file: true, user: true }
     })
-    console.log('FileShare records for this user:', userShares.length)
-    if (userShares.length > 0) {
-      console.log('Sample user share:', userShares[0])
+    console.log('FileShare records for this user by email:', userSharesByEmail.length)
+    if (userSharesByEmail.length > 0) {
+      console.log('Sample user share by email:', {
+        id: userSharesByEmail[0].id,
+        fileId: userSharesByEmail[0].fileId,
+        sharedWithEmail: userSharesByEmail[0].sharedWithEmail,
+        senderId: userSharesByEmail[0].userId,
+        senderEmail: userSharesByEmail[0].user?.email
+      })
     }
 
     // Get files shared with the current user with pagination

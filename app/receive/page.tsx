@@ -151,8 +151,33 @@ export default function Receive() {
     const handleFileShared = (data: any) => {
       console.log('Real-time file shared notification:', data)
       // Check if this file is shared with the current user
-      if (data.receiverEmail === session.user.email) {
+      if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
         console.log('File shared with current user, refreshing...')
+        // Show notification
+        setNewFileNotifications([{
+          id: `temp-${Date.now()}`,
+          fileId: data.fileId,
+          name: data.fileName,
+          originalName: data.fileName,
+          size: 0, // Will be updated when fetched
+          type: 'unknown',
+          url: '',
+          encrypted: false,
+          fileType: 'unknown',
+          senderEmail: data.senderEmail,
+          senderName: data.senderName,
+          sharedAt: data.sharedAt,
+          permissions: 'view'
+        }])
+        setShowNotification(true)
+
+        // Auto-hide notification after 5 seconds
+        setTimeout(() => {
+          setShowNotification(false)
+          setNewFileNotifications([])
+        }, 5000)
+
+        // Refresh the file list
         fetchReceivedFiles(true) // Refresh with notifications
       }
     }
