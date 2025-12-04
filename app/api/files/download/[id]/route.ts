@@ -51,28 +51,39 @@ export async function GET(
     // Fetch file from blob storage
     const response = await fetch(file.url)
     if (!response.ok) {
-      return NextResponse.json({ error: "Failed to fetch file" }, { status: 500 })
+      return NextResponse.json({ error: "Failed to fetch file from storage" }, { status: 500 })
     }
 
-    let fileData = await response.arrayBuffer()
+    let fileData: ArrayBuffer
     let contentType = file.type
     let fileName = file.name
 
-    // Decrypt if file is encrypted and key is provided
+    // Handle encrypted vs non-encrypted files differently
     if (file.encrypted) {
       if (!decryptionKey) {
         return NextResponse.json({ error: "Decryption key required for encrypted file" }, { status: 400 })
       }
 
       try {
-        // Get encrypted data as string first
+        // For encrypted files, get as text first
         const encryptedText = await response.text()
         fileData = decryptFile(encryptedText, decryptionKey)
         contentType = file.type // Restore original content type
         fileName = file.originalName || file.name
       } catch (error) {
         console.error('Decryption error:', error)
-        return NextResponse.json({ error: "Invalid decryption key" }, { status: 400 })
+        return NextResponse.json({
+          error: "Failed to decrypt file. Please check your decryption key.",
+          details: process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined
+        }, { status: 400 })
+      }
+    } else {
+      // For non-encrypted files, get as array buffer
+      try {
+        fileData = await response.arrayBuffer()
+      } catch (error) {
+        console.error('File fetch error:', error)
+        return NextResponse.json({ error: "Failed to read file data" }, { status: 500 })
       }
     }
 
