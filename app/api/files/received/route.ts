@@ -36,10 +36,13 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    const normalizedUserEmail = session.user.email.trim().toLowerCase()
+    console.log('Fetching received files for user:', session.user.email, 'normalized:', normalizedUserEmail)
+
     // Get files shared with the current user with pagination
     const receivedFiles = await prisma.fileShare.findMany({
       where: {
-        sharedWithEmail: session.user.email,
+        sharedWithEmail: normalizedUserEmail,
         revoked: false,
         OR: [
           { expiresAt: null },
@@ -64,6 +67,11 @@ export async function GET(request: NextRequest) {
       skip: offset,
       take: limit
     })
+
+    console.log('Found received files:', receivedFiles.length)
+    if (receivedFiles.length > 0) {
+      console.log('Sample file share:', receivedFiles[0])
+    }
 
     // Transform the data to match the expected format
     // Note: encryptionKey is not sent to client for security - decryption happens server-side

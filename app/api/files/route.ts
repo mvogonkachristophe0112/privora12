@@ -43,6 +43,9 @@ export async function POST(request: NextRequest) {
     const recipients = JSON.parse(formData.get('recipients') as string || '[]')
     const shareMode = formData.get('shareMode') as string
 
+    console.log('Parsed recipients:', recipients)
+    console.log('Share mode:', shareMode)
+
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
     }
@@ -92,16 +95,25 @@ export async function POST(request: NextRequest) {
 
     // Handle sharing if recipients are provided
     if (shareMode === 'share' && recipients.length > 0) {
+      console.log('Creating file shares for recipients:', recipients)
       for (const email of recipients) {
-        // Create share record
-        await prisma.fileShare.create({
-          data: {
-            fileId: newFile.id,
-            sharedWithEmail: email,
-            permissions: 'view', // Default permission
-            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-          }
-        })
+        try {
+          // Normalize email to lowercase for consistency
+          const normalizedEmail = email.trim().toLowerCase()
+
+          // Create share record
+          const share = await prisma.fileShare.create({
+            data: {
+              fileId: newFile.id,
+              sharedWithEmail: normalizedEmail,
+              permissions: 'view', // Default permission
+              expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+            }
+          })
+          console.log('Created file share for', normalizedEmail, ':', share)
+        } catch (shareError) {
+          console.error('Error creating file share for', email, ':', shareError)
+        }
       }
     }
 
