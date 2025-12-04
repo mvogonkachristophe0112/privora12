@@ -314,8 +314,9 @@ export default function Upload() {
   }
 
   const addRecipient = () => {
-    if (newRecipient.trim() && !recipients.includes(newRecipient.trim())) {
-      setRecipients([...recipients, newRecipient.trim()])
+    const normalizedEmail = newRecipient.trim().toLowerCase()
+    if (normalizedEmail && !recipients.some(r => r.toLowerCase() === normalizedEmail)) {
+      setRecipients([...recipients, normalizedEmail])
       setNewRecipient("")
     }
   }

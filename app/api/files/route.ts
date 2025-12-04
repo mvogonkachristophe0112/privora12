@@ -56,51 +56,71 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "File size exceeds 100MB limit" }, { status: 400 })
     }
 
+    console.log('Starting file processing...')
     let fileData = await file.arrayBuffer()
+    console.log('File data loaded, size:', fileData.byteLength)
     let finalFileName = file.name
     let finalEncryptionKey = encryptionKey || ""
 
     // Encrypt file if requested
     if (encrypt && finalEncryptionKey) {
       try {
+        console.log('Starting encryption...')
         const encrypted = encryptFile(fileData, finalEncryptionKey)
+        console.log('Encryption completed, encrypted string length:', encrypted.length)
         fileData = new TextEncoder().encode(encrypted).buffer
         finalFileName = `${file.name}.encrypted`
+        console.log('Final encrypted buffer size:', fileData.byteLength)
       } catch (error) {
         console.error('Encryption error:', error)
         return NextResponse.json({ error: "Encryption failed" }, { status: 500 })
       }
+    } else {
+      console.log('No encryption applied')
     }
 
+    console.log('Starting Vercel Blob upload...')
     // Upload to Vercel Blob
     const blob = await put(finalFileName, fileData, {
       access: 'public',
       contentType: encrypt ? 'application/octet-stream' : file.type || 'application/octet-stream'
     })
+    console.log('Blob upload successful, URL:', blob.url)
 
-    // Save to database
-    const newFile = await prisma.file.create({
-      data: {
-        name: file.name,
-        originalName: file.name,
-        size: file.size,
-        type: file.type,
-        url: blob.url,
-        encrypted: encrypt,
-        encryptionKey: encrypt ? finalEncryptionKey : null,
-        fileType: type,
-        userId: session.user.id
-      }
-    })
+    console.log('Saving to database...')
+    let newFile
+    try {
+      // Save to database
+      newFile = await prisma.file.create({
+        data: {
+          name: file.name,
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          url: blob.url,
+          encrypted: encrypt,
+          encryptionKey: encrypt ? finalEncryptionKey : null,
+          fileType: type,
+          userId: session.user.id
+        }
+      })
+      console.log('Database save successful, file ID:', newFile.id)
+    } catch (dbError) {
+      console.error('Database save failed:', dbError)
+      // Clean up blob if database save fails
+      // Note: Vercel Blob doesn't have a delete API easily accessible
+      throw new Error('Failed to save file to database')
+    }
 
     // Handle sharing if recipients are provided
     if (shareMode === 'share' && recipients.length > 0) {
       console.log('Creating file shares for recipients:', recipients)
+      const shareResults = []
       for (const email of recipients) {
-        try {
-          // Normalize email to lowercase for consistency
-          const normalizedEmail = email.trim().toLowerCase()
+        // Normalize email to lowercase for consistency
+        const normalizedEmail = email.trim().toLowerCase()
 
+        try {
           // Create share record
           const share = await prisma.fileShare.create({
             data: {
@@ -111,10 +131,17 @@ export async function POST(request: NextRequest) {
             }
           })
           console.log('Created file share for', normalizedEmail, ':', share)
+          shareResults.push({ email: normalizedEmail, success: true, share })
         } catch (shareError) {
           console.error('Error creating file share for', email, ':', shareError)
+          shareResults.push({ email: normalizedEmail, success: false, error: shareError })
         }
       }
+
+      // Log share results
+      const successfulShares = shareResults.filter(r => r.success).length
+      const failedShares = shareResults.filter(r => !r.success).length
+      console.log(`File shares: ${successfulShares} successful, ${failedShares} failed`)
     }
 
     return NextResponse.json({
