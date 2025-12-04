@@ -342,22 +342,48 @@ export default function Receive() {
       a.href = downloadUrl
       a.download = file.originalName || file.name
       a.style.display = 'none'
+      a.rel = 'noopener noreferrer' // Security best practice
 
       console.log('Triggering download...')
       document.body.appendChild(a)
-      a.click()
 
-      // Clean up
+      // Use a more reliable click method
+      try {
+        a.click()
+        console.log('Download click triggered successfully')
+      } catch (clickError) {
+        console.error('Click failed, trying alternative method:', clickError)
+        // Fallback for some browsers
+        const event = new MouseEvent('click', {
+          view: window,
+          bubbles: true,
+          cancelable: true
+        })
+        a.dispatchEvent(event)
+      }
+
+      // Clean up with longer delay for safety
       setTimeout(() => {
-        document.body.removeChild(a)
-        window.URL.revokeObjectURL(downloadUrl)
-        console.log('Download cleanup completed')
-      }, 100)
+        try {
+          document.body.removeChild(a)
+          window.URL.revokeObjectURL(downloadUrl)
+          console.log('Download cleanup completed')
+        } catch (cleanupError) {
+          console.warn('Cleanup warning (non-critical):', cleanupError)
+        }
+      }, 200)
 
       setDecryptingFile(null)
       setDecryptionKey("")
 
       console.log('Download completed successfully')
+
+      // Show success feedback
+      const successMessage = `${file.name} downloaded successfully!`
+      console.log(successMessage)
+
+      // Optional: Show a brief success toast (you can implement this)
+      // For now, we'll just log it
 
     } catch (error) {
       console.error('Download error:', error)
@@ -897,31 +923,59 @@ export default function Receive() {
                             <button
                               onClick={() => handlePreview(file)}
                               disabled={actionLoading === file.id}
-                              className="flex-1 sm:flex-none bg-purple-500 hover:bg-purple-600 disabled:bg-purple-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                              className="flex-1 sm:flex-none bg-purple-500 hover:bg-purple-600 disabled:bg-purple-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
                             >
-                              {actionLoading === file.id ? "Loading..." : "👁️ Preview"}
+                              {actionLoading === file.id ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
+                                  <span>Loading...</span>
+                                </div>
+                              ) : (
+                                "👁️ Preview"
+                              )}
                             </button>
                           )}
                           <button
                             onClick={() => handleDownload(file)}
                             disabled={actionLoading === file.id}
-                            className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                            className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
                           >
-                            {actionLoading === file.id ? "Processing..." : "⬇️ Download"}
+                            {actionLoading === file.id ? (
+                              <div className="flex items-center gap-2">
+                                <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
+                                <span>Downloading...</span>
+                              </div>
+                            ) : (
+                              "⬇️ Download"
+                            )}
                           </button>
                           <button
                             onClick={() => handleView(file)}
                             disabled={actionLoading === file.id}
-                            className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                            className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
                           >
-                            {actionLoading === file.id ? "Loading..." : "🔗 Open"}
+                            {actionLoading === file.id ? (
+                              <div className="flex items-center gap-2">
+                                <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
+                                <span>Loading...</span>
+                              </div>
+                            ) : (
+                              "🔗 Open"
+                            )}
                           </button>
                           <button
                             onClick={() => handleDelete(file)}
                             disabled={actionLoading === file.id}
-                            className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                            className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
                           >
-                            {actionLoading === file.id ? "Deleting..." : "🗑️ Delete"}
+                            {actionLoading === file.id ? (
+                              <div className="flex items-center gap-2">
+                                <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
+                                <span>Deleting...</span>
+                              </div>
+                            ) : (
+                              "🗑️ Delete"
+                            )}
                           </button>
                         </div>
                       </div>
