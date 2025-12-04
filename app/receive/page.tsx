@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { useSession } from "next-auth/react"
 import { usePresence } from "@/lib/presence-context"
 import { useNotifications } from "@/lib/notification-context"
@@ -24,7 +24,7 @@ interface ReceivedFile {
 
 export default function Receive() {
    const { data: session } = useSession()
-   const { isConnected } = usePresence()
+   const { isConnected, userPresence } = usePresence()
    const { incrementNewFiles, clearNewFiles } = useNotifications()
    const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
    const [loading, setLoading] = useState(true)
@@ -47,16 +47,41 @@ export default function Receive() {
    const [previewFile, setPreviewFile] = useState<ReceivedFile | null>(null)
    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
    const [previewLoading, setPreviewLoading] = useState(false)
+ 
+   // Performance optimizations
+   const [currentPage, setCurrentPage] = useState(1)
+   const [filesPerPage] = useState(20) // Load 20 files at a time
+   const [totalFiles, setTotalFiles] = useState(0)
+   const [cachedFiles, setCachedFiles] = useState<Map<number, ReceivedFile[]>>(new Map())
+   const [isLoadingMore, setIsLoadingMore] = useState(false)
 
-  const fetchReceivedFiles = useCallback(async (showNotifications = false) => {
+  const fetchReceivedFiles = useCallback(async (showNotifications = false, page = 1, append = false) => {
     if (!session) return
 
+    // Check cache first
+    if (cachedFiles.has(page) && !showNotifications) {
+      const cached = cachedFiles.get(page)!
+      if (append) {
+        setReceivedFiles(prev => [...prev, ...cached])
+      } else {
+        setReceivedFiles(cached)
+        setTotalFiles(cached.length)
+      }
+      return
+    }
+
     try {
-      const response = await fetch('/api/files/received')
+      setIsLoadingMore(append)
+      const response = await fetch(`/api/files/received?page=${page}&limit=${filesPerPage}`)
       if (!response.ok) {
         throw new Error('Failed to fetch received files')
       }
-      const files = await response.json()
+      const data = await response.json()
+      const files = data.files || data
+      const total = data.total || files.length
+
+      // Cache the results
+      setCachedFiles(prev => new Map(prev.set(page, files)))
 
       if (showNotifications && receivedFiles.length > 0) {
         // Check for new files since last update
@@ -89,14 +114,23 @@ export default function Receive() {
         }
       }
 
-      setReceivedFiles(files)
+      if (append) {
+        setReceivedFiles(prev => [...prev, ...files])
+      } else {
+        setReceivedFiles(files)
+        setTotalFiles(total)
+        setCurrentPage(page)
+      }
+
       setLastUpdate(new Date())
       setError(null)
     } catch (err) {
       console.error('Error fetching received files:', err)
       setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setIsLoadingMore(false)
     }
-  }, [session, receivedFiles])
+  }, [session, receivedFiles, cachedFiles, filesPerPage, incrementNewFiles])
 
   useEffect(() => {
     fetchReceivedFiles()
@@ -113,7 +147,7 @@ export default function Receive() {
 
     const pollInterval = setInterval(() => {
       fetchReceivedFiles(true) // Show notifications for new files
-    }, 30000) // Poll every 30 seconds
+    }, 60000) // Poll every 60 seconds (reduced frequency for better performance)
 
     return () => clearInterval(pollInterval)
   }, [session, fetchReceivedFiles])
@@ -145,6 +179,75 @@ export default function Receive() {
     if (type.includes('word') || type.includes('document')) return '📝'
     return '📄'
   }
+
+  // Memoized user presence function for better performance
+  const getUserPresence = useCallback((email: string) => {
+    const presence = userPresence[email]
+    if (presence?.isOnline) {
+      return {
+        status: 'online',
+        text: 'Online',
+        color: 'text-green-600',
+        dotColor: 'bg-green-500',
+        deviceType: presence.deviceType,
+        lastSeen: presence.lastSeen
+      }
+    } else if (presence) {
+      const lastSeen = new Date(presence.lastSeen)
+      const now = new Date()
+      const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
+
+      if (diffMinutes < 1) {
+        return {
+          status: 'away',
+          text: 'Last seen just now',
+          color: 'text-gray-500',
+          dotColor: 'bg-gray-400',
+          deviceType: presence.deviceType,
+          lastSeen: presence.lastSeen
+        }
+      }
+      if (diffMinutes < 60) {
+        return {
+          status: 'away',
+          text: `Last seen ${diffMinutes}m ago`,
+          color: 'text-gray-500',
+          dotColor: 'bg-gray-400',
+          deviceType: presence.deviceType,
+          lastSeen: presence.lastSeen
+        }
+      }
+
+      const diffHours = Math.floor(diffMinutes / 60)
+      if (diffHours < 24) {
+        return {
+          status: 'away',
+          text: `Last seen ${diffHours}h ago`,
+          color: 'text-gray-500',
+          dotColor: 'bg-gray-400',
+          deviceType: presence.deviceType,
+          lastSeen: presence.lastSeen
+        }
+      }
+
+      return {
+        status: 'offline',
+        text: `Last seen ${lastSeen.toLocaleDateString()}`,
+        color: 'text-gray-400',
+        dotColor: 'bg-gray-300',
+        deviceType: presence.deviceType,
+        lastSeen: presence.lastSeen
+      }
+    }
+    return {
+      status: 'offline',
+      text: 'Offline',
+      color: 'text-gray-400',
+      dotColor: 'bg-gray-300',
+      deviceType: 'desktop' as const,
+      lastSeen: new Date()
+    }
+  }, [userPresence])
 
   const handleDownload = async (file: ReceivedFile) => {
     if (file.encrypted) {
@@ -361,34 +464,36 @@ export default function Receive() {
     window.location.href = '/connections'
   }
 
-  // Filtering and sorting logic
-  const filteredAndSortedFiles = receivedFiles
-    .filter(file => {
-      const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          file.senderEmail.toLowerCase().includes(searchQuery.toLowerCase())
-      const matchesType = filterType === "all" ||
-                         (filterType === "encrypted" && file.encrypted) ||
-                         (filterType === "documents" && file.type.includes("document")) ||
-                         (filterType === "images" && file.type.includes("image")) ||
-                         (filterType === "videos" && file.type.includes("video"))
-      return matchesSearch && matchesType
-    })
-    .sort((a, b) => {
-      let comparison = 0
-      switch (sortBy) {
-        case "name":
-          comparison = a.name.localeCompare(b.name)
-          break
-        case "size":
-          comparison = a.size - b.size
-          break
-        case "date":
-        default:
-          comparison = new Date(a.sharedAt).getTime() - new Date(b.sharedAt).getTime()
-          break
-      }
-      return sortOrder === "asc" ? comparison : -comparison
-    })
+  // Memoized filtering and sorting logic for better performance
+  const filteredAndSortedFiles = useMemo(() => {
+    return receivedFiles
+      .filter(file => {
+        const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                             file.senderEmail.toLowerCase().includes(searchQuery.toLowerCase())
+        const matchesType = filterType === "all" ||
+                            (filterType === "encrypted" && file.encrypted) ||
+                            (filterType === "documents" && file.type.includes("document")) ||
+                            (filterType === "images" && file.type.includes("image")) ||
+                            (filterType === "videos" && file.type.includes("video"))
+        return matchesSearch && matchesType
+      })
+      .sort((a, b) => {
+        let comparison = 0
+        switch (sortBy) {
+          case "name":
+            comparison = a.name.localeCompare(b.name)
+            break
+          case "size":
+            comparison = a.size - b.size
+            break
+          case "date":
+          default:
+            comparison = new Date(a.sharedAt).getTime() - new Date(b.sharedAt).getTime()
+            break
+        }
+        return sortOrder === "asc" ? comparison : -comparison
+      })
+  }, [receivedFiles, searchQuery, filterType, sortBy, sortOrder])
 
   // Bulk actions
   const handleSelectFile = (fileId: string) => {
@@ -508,6 +613,26 @@ export default function Receive() {
                   </svg>
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Load More Button for Pagination */}
+          {receivedFiles.length > 0 && receivedFiles.length < totalFiles && (
+            <div className="flex justify-center mt-8">
+              <button
+                onClick={() => fetchReceivedFiles(false, currentPage + 1, true)}
+                disabled={isLoadingMore}
+                className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-6 py-3 rounded-lg transition-colors disabled:cursor-not-allowed touch-manipulation"
+              >
+                {isLoadingMore ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Loading...
+                  </div>
+                ) : (
+                  `Load More Files (${totalFiles - receivedFiles.length} remaining)`
+                )}
+              </button>
             </div>
           )}
 

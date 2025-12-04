@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next"
 import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
@@ -18,7 +18,25 @@ export async function GET() {
       return NextResponse.json({ error: "Database connection failed" }, { status: 500 })
     }
 
-    // Get files shared with the current user
+    // Parse pagination parameters
+    const { searchParams } = new URL(request.url)
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '20')
+    const offset = (page - 1) * limit
+
+    // Get total count for pagination
+    const totalCount = await prisma.fileShare.count({
+      where: {
+        sharedWithEmail: session.user.email,
+        revoked: false,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } }
+        ]
+      }
+    })
+
+    // Get files shared with the current user with pagination
     const receivedFiles = await prisma.fileShare.findMany({
       where: {
         sharedWithEmail: session.user.email,
@@ -42,7 +60,9 @@ export async function GET() {
       },
       orderBy: {
         createdAt: 'desc'
-      }
+      },
+      skip: offset,
+      take: limit
     })
 
     // Transform the data to match the expected format
@@ -64,7 +84,13 @@ export async function GET() {
       expiresAt: share.expiresAt?.toISOString()
     }))
 
-    return NextResponse.json(files)
+    return NextResponse.json({
+      files,
+      total: totalCount,
+      page,
+      limit,
+      hasMore: offset + limit < totalCount
+    })
   } catch (error) {
     console.error('GET /api/files/received error:', error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
