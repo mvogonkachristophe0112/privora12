@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { useSession } from "next-auth/react"
 import { usePresence } from "@/lib/presence-context"
+const { socket } = usePresence()
 import { useNotifications } from "@/lib/notification-context"
 
 interface ReceivedFile {
@@ -23,8 +24,8 @@ interface ReceivedFile {
 }
 
 export default function Receive() {
-   const { data: session } = useSession()
-   const { isConnected, userPresence } = usePresence()
+    const { data: session } = useSession()
+    const { isConnected, userPresence, socket } = usePresence()
    const { incrementNewFiles, clearNewFiles } = useNotifications()
    const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
    const [loading, setLoading] = useState(true)
@@ -142,6 +143,26 @@ export default function Receive() {
   useEffect(() => {
     clearNewFiles()
   }, [clearNewFiles])
+
+  // Real-time updates via socket
+  useEffect(() => {
+    if (!socket || !session) return
+
+    const handleFileShared = (data: any) => {
+      console.log('Real-time file shared notification:', data)
+      // Check if this file is shared with the current user
+      if (data.receiverEmail === session.user.email) {
+        console.log('File shared with current user, refreshing...')
+        fetchReceivedFiles(true) // Refresh with notifications
+      }
+    }
+
+    socket.on('file-shared', handleFileShared)
+
+    return () => {
+      socket.off('file-shared', handleFileShared)
+    }
+  }, [socket, session, fetchReceivedFiles])
 
   // Polling for real-time updates (fallback for socket-based notifications)
   useEffect(() => {

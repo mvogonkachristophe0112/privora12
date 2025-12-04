@@ -10,8 +10,10 @@ export type NextApiResponseServerIo = NextApiResponse & {
   }
 }
 
+let io: ServerIO | null = null
+
 export const initSocket = (httpServer: NetServer): ServerIO => {
-  const io = new ServerIO(httpServer, {
+  io = new ServerIO(httpServer, {
     path: '/api/socket',
     cors: {
       origin: process.env.NEXTAUTH_URL || 'http://localhost:3000',
@@ -79,4 +81,14 @@ export const initSocket = (httpServer: NetServer): ServerIO => {
   })
 
   return io
+}
+
+// Function to emit events from server-side API routes
+export const emitSocketEvent = (event: string, data: any) => {
+  if (io) {
+    console.log('Emitting socket event:', event, data)
+    io.emit(event, data)
+  } else {
+    console.warn('Socket.io not initialized, cannot emit event:', event)
+  }
 }

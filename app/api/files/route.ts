@@ -4,6 +4,7 @@ import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
 import { put } from '@vercel/blob'
 import { encryptFile } from "@/lib/crypto"
+import { emitSocketEvent } from "@/lib/socket"
 
 export async function GET() {
   try {
@@ -119,6 +120,7 @@ export async function POST(request: NextRequest) {
       for (const email of recipients) {
         // Normalize email to lowercase for consistency
         const normalizedEmail = email.trim().toLowerCase()
+        console.log('Processing recipient:', email, '-> normalized:', normalizedEmail)
 
         try {
           // Create share record
@@ -130,10 +132,20 @@ export async function POST(request: NextRequest) {
               expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
             }
           })
-          console.log('Created file share for', normalizedEmail, ':', share)
+          console.log('Successfully created file share for', normalizedEmail, ':', share.id)
+
+          // Emit real-time notification for file sharing
+          emitSocketEvent('file-shared', {
+            fileId: newFile.id,
+            fileName: newFile.name,
+            senderEmail: session.user.email,
+            receiverEmail: normalizedEmail,
+            sharedAt: share.createdAt.toISOString(),
+          })
+
           shareResults.push({ email: normalizedEmail, success: true, share })
         } catch (shareError) {
-          console.error('Error creating file share for', email, ':', shareError)
+          console.error('Error creating file share for', email, '(', normalizedEmail, '):', shareError)
           shareResults.push({ email: normalizedEmail, success: false, error: shareError })
         }
       }
@@ -142,6 +154,12 @@ export async function POST(request: NextRequest) {
       const successfulShares = shareResults.filter(r => r.success).length
       const failedShares = shareResults.filter(r => !r.success).length
       console.log(`File shares: ${successfulShares} successful, ${failedShares} failed`)
+
+      // Debug: Verify shares were created
+      const verifyShares = await prisma.fileShare.findMany({
+        where: { fileId: newFile.id }
+      })
+      console.log('Verification: Found', verifyShares.length, 'shares for file', newFile.id)
     }
 
     return NextResponse.json({

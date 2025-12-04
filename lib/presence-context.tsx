@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
 import { useSession } from 'next-auth/react'
-import { supabase } from './supabase'
+import { io, Socket } from 'socket.io-client'
 
 // Device detection utility
 function detectDeviceType(): 'phone' | 'laptop' | 'tablet' | 'desktop' {
@@ -50,6 +50,7 @@ interface UserPresence {
 interface PresenceContextType {
   userPresence: Record<string, UserPresence>
   isConnected: boolean
+  socket: any
 }
 
 const PresenceContext = createContext<PresenceContextType | undefined>(undefined)
@@ -58,6 +59,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession()
   const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({})
   const [isConnected, setIsConnected] = useState(false)
+  const [socket, setSocket] = useState<Socket | null>(null)
   const [deviceType, setDeviceType] = useState<'phone' | 'laptop' | 'tablet' | 'desktop'>('desktop')
   const [lastActivity, setLastActivity] = useState<Date>(new Date())
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -136,6 +138,22 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
     // Only initialize on client side
     if (typeof window === 'undefined') return
 
+    // Initialize socket connection
+    const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
+      path: '/api/socket',
+    })
+
+    socketConnection.on('connect', () => {
+      console.log('Presence: Socket connected')
+      setIsConnected(true)
+    })
+
+    socketConnection.on('disconnect', () => {
+      console.log('Presence: Socket disconnected')
+      setIsConnected(false)
+    })
+
+    setSocket(socketConnection)
     setIsConnected(true)
 
     // Immediately fetch presence data when user logs in
@@ -171,6 +189,10 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
     return () => {
       clearInterval(presenceInterval)
       setIsConnected(false)
+      if (socketConnection) {
+        socketConnection.disconnect()
+        setSocket(null)
+      }
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current)
         heartbeatIntervalRef.current = null
@@ -200,6 +222,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const value: PresenceContextType = {
     userPresence,
     isConnected,
+    socket,
   }
 
   return (
