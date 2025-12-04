@@ -67,6 +67,7 @@ export default function Receive() {
         setReceivedFiles(cached)
         setTotalFiles(cached.length)
       }
+      setLoading(false) // Clear loading state when using cache
       return
     }
 
@@ -129,6 +130,7 @@ export default function Receive() {
       setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
     } finally {
       setIsLoadingMore(false)
+      setLoading(false) // Clear initial loading state
     }
   }, [session, receivedFiles, cachedFiles, filesPerPage, incrementNewFiles])
 
