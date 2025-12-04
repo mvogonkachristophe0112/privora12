@@ -5,6 +5,7 @@ import { Providers } from "@/components/Providers";
 import { Navbar } from "@/components/Navbar";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { PerformanceMonitor } from "@/components/PerformanceMonitor";
+import { NotificationProvider } from "@/lib/notification-context";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,11 +33,13 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ErrorBoundary>
-          <Providers>
-            <Navbar />
-            {children}
-            <PerformanceMonitor />
-          </Providers>
+          <NotificationProvider>
+            <Providers>
+              <Navbar />
+              {children}
+              <PerformanceMonitor />
+            </Providers>
+          </NotificationProvider>
         </ErrorBoundary>
       </body>
     </html>

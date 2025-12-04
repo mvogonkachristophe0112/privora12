@@ -1,7 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useSession } from "next-auth/react"
+import { usePresence } from "@/lib/presence-context"
+import { useNotifications } from "@/lib/notification-context"
 
 interface ReceivedFile {
   id: string // This is the share ID
@@ -21,46 +23,100 @@ interface ReceivedFile {
 }
 
 export default function Receive() {
-  const { data: session } = useSession()
-  const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [decryptingFile, setDecryptingFile] = useState<ReceivedFile | null>(null)
-  const [decryptionKey, setDecryptionKey] = useState("")
-  const [decryptionError, setDecryptionError] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState(false)
-  const [deletingFile, setDeletingFile] = useState<ReceivedFile | null>(null)
-  const [viewingFile, setViewingFile] = useState<ReceivedFile | null>(null)
-  const [actionLoading, setActionLoading] = useState<string | null>(null) // Track which file is being acted upon
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
-  const [searchQuery, setSearchQuery] = useState("")
-  const [filterType, setFilterType] = useState<string>("all")
-  const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+   const { data: session } = useSession()
+   const { isConnected } = usePresence()
+   const { incrementNewFiles, clearNewFiles } = useNotifications()
+   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
+   const [loading, setLoading] = useState(true)
+   const [error, setError] = useState<string | null>(null)
+   const [decryptingFile, setDecryptingFile] = useState<ReceivedFile | null>(null)
+   const [decryptionKey, setDecryptionKey] = useState("")
+   const [decryptionError, setDecryptionError] = useState<string | null>(null)
+   const [downloading, setDownloading] = useState(false)
+   const [deletingFile, setDeletingFile] = useState<ReceivedFile | null>(null)
+   const [viewingFile, setViewingFile] = useState<ReceivedFile | null>(null)
+   const [actionLoading, setActionLoading] = useState<string | null>(null) // Track which file is being acted upon
+   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
+   const [searchQuery, setSearchQuery] = useState("")
+   const [filterType, setFilterType] = useState<string>("all")
+   const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
+   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+   const [newFileNotifications, setNewFileNotifications] = useState<ReceivedFile[]>([])
+   const [showNotification, setShowNotification] = useState(false)
+   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+   const [previewFile, setPreviewFile] = useState<ReceivedFile | null>(null)
+   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+   const [previewLoading, setPreviewLoading] = useState(false)
+
+  const fetchReceivedFiles = useCallback(async (showNotifications = false) => {
+    if (!session) return
+
+    try {
+      const response = await fetch('/api/files/received')
+      if (!response.ok) {
+        throw new Error('Failed to fetch received files')
+      }
+      const files = await response.json()
+
+      if (showNotifications && receivedFiles.length > 0) {
+        // Check for new files since last update
+        const previousFileIds = new Set(receivedFiles.map(f => f.id))
+        const newFiles = files.filter((file: ReceivedFile) => !previousFileIds.has(file.id))
+
+        if (newFiles.length > 0) {
+          setNewFileNotifications(newFiles)
+          setShowNotification(true)
+          incrementNewFiles(newFiles.length)
+
+          // Auto-hide notification after 5 seconds
+          setTimeout(() => {
+            setShowNotification(false)
+            setNewFileNotifications([])
+          }, 5000)
+
+          // Optional: Play notification sound
+          if (typeof window !== 'undefined' && 'Audio' in window) {
+            try {
+              const audio = new Audio('/notification.mp3')
+              audio.volume = 0.3
+              audio.play().catch(() => {
+                // Silently fail if audio can't play
+              })
+            } catch {
+              // Silently fail if audio not supported
+            }
+          }
+        }
+      }
+
+      setReceivedFiles(files)
+      setLastUpdate(new Date())
+      setError(null)
+    } catch (err) {
+      console.error('Error fetching received files:', err)
+      setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }, [session, receivedFiles])
 
   useEffect(() => {
-    const fetchReceivedFiles = async () => {
-      if (!session) return
-
-      try {
-        setLoading(true)
-        setError(null)
-        const response = await fetch('/api/files/received')
-        if (!response.ok) {
-          throw new Error('Failed to fetch received files')
-        }
-        const files = await response.json()
-        setReceivedFiles(files)
-      } catch (err) {
-        console.error('Error fetching received files:', err)
-        setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      } finally {
-        setLoading(false)
-      }
-    }
-
     fetchReceivedFiles()
-  }, [session])
+  }, [fetchReceivedFiles])
+
+  // Clear notifications when user visits the page
+  useEffect(() => {
+    clearNewFiles()
+  }, [clearNewFiles])
+
+  // Polling for real-time updates (fallback for socket-based notifications)
+  useEffect(() => {
+    if (!session) return
+
+    const pollInterval = setInterval(() => {
+      fetchReceivedFiles(true) // Show notifications for new files
+    }, 30000) // Poll every 30 seconds
+
+    return () => clearInterval(pollInterval)
+  }, [session, fetchReceivedFiles])
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -139,36 +195,42 @@ export default function Receive() {
     }
 
     if (viewingFile) {
-      // Handle viewing decrypted file
-      try {
-        setActionLoading(decryptingFile.id)
-        const url = `/api/files/download/${decryptingFile.fileId}?key=${encodeURIComponent(decryptionKey.trim())}`
-        const response = await fetch(url)
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}))
-          throw new Error(errorData.error || 'Failed to fetch decrypted file')
-        }
-
-        const blob = await response.blob()
-        const viewUrl = window.URL.createObjectURL(blob)
-
+      // Handle viewing decrypted file (preview or open in new tab)
+      if (previewFile) {
+        // Load preview for decrypted file
+        await loadPreview(decryptingFile, decryptionKey.trim())
+      } else {
         // Open in new tab
-        window.open(viewUrl, '_blank')
+        try {
+          setActionLoading(decryptingFile.id)
+          const url = `/api/files/download/${decryptingFile.fileId}?key=${encodeURIComponent(decryptionKey.trim())}`
+          const response = await fetch(url)
 
-        // Clean up after a delay
-        setTimeout(() => {
-          window.URL.revokeObjectURL(viewUrl)
-        }, 1000)
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}))
+            throw new Error(errorData.error || 'Failed to fetch decrypted file')
+          }
 
-        setDecryptingFile(null)
-        setViewingFile(null)
-        setDecryptionKey("")
-      } catch (error) {
-        console.error('View decryption error:', error)
-        setDecryptionError(error instanceof Error ? error.message : 'Failed to view file')
-      } finally {
-        setActionLoading(null)
+          const blob = await response.blob()
+          const viewUrl = window.URL.createObjectURL(blob)
+
+          // Open in new tab
+          window.open(viewUrl, '_blank')
+
+          // Clean up after a delay
+          setTimeout(() => {
+            window.URL.revokeObjectURL(viewUrl)
+          }, 1000)
+
+          setDecryptingFile(null)
+          setViewingFile(null)
+          setDecryptionKey("")
+        } catch (error) {
+          console.error('View decryption error:', error)
+          setDecryptionError(error instanceof Error ? error.message : 'Failed to view file')
+        } finally {
+          setActionLoading(null)
+        }
       }
     } else {
       // Handle downloading decrypted file
@@ -176,9 +238,9 @@ export default function Receive() {
     }
   }
 
-  const handleView = async (file: ReceivedFile) => {
+  const handlePreview = async (file: ReceivedFile) => {
     if (file.encrypted) {
-      // For encrypted files, we need to download and then view
+      // For encrypted files, we need to decrypt first
       setViewingFile(file)
       setDecryptingFile(file)
       setDecryptionKey("")
@@ -186,7 +248,60 @@ export default function Receive() {
       return
     }
 
-    // For non-encrypted files, try to view directly
+    // For non-encrypted files, try to preview
+    await loadPreview(file)
+  }
+
+  const loadPreview = async (file: ReceivedFile, decryptionKey?: string) => {
+    try {
+      setPreviewLoading(true)
+      setPreviewFile(file)
+
+      const url = `/api/files/download/${file.fileId}${decryptionKey ? `?key=${encodeURIComponent(decryptionKey)}` : ''}`
+      const response = await fetch(url)
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch file for preview')
+      }
+
+      const blob = await response.blob()
+
+      // Check if file can be previewed
+      if (file.type.startsWith('image/') || file.type.includes('pdf') || file.type.includes('text')) {
+        const previewUrl = window.URL.createObjectURL(blob)
+        setPreviewUrl(previewUrl)
+      } else {
+        // For non-previewable files, trigger download
+        const downloadUrl = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.download = file.originalName || file.name
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(downloadUrl)
+        document.body.removeChild(a)
+        setPreviewFile(null)
+      }
+    } catch (error) {
+      console.error('Preview error:', error)
+      setPreviewFile(null)
+      // Fallback to download
+      await downloadFile(file, decryptionKey || "")
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const handleView = async (file: ReceivedFile) => {
+    // For now, preview and view are the same - open in new tab
+    if (file.encrypted) {
+      setViewingFile(file)
+      setDecryptingFile(file)
+      setDecryptionKey("")
+      setDecryptionError(null)
+      return
+    }
+
     try {
       setActionLoading(file.id)
       const url = `/api/files/download/${file.fileId}`
@@ -365,19 +480,64 @@ export default function Receive() {
     <div className="min-h-screen bg-background text-foreground">
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto">
+          {/* Real-time Notification Banner */}
+          {showNotification && newFileNotifications.length > 0 && (
+            <div className="mb-6 bg-gradient-to-r from-green-500 to-blue-500 text-white p-4 rounded-xl shadow-lg animate-pulse">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="text-2xl">📨</div>
+                  <div>
+                    <h3 className="font-semibold text-lg">
+                      {newFileNotifications.length} new file{newFileNotifications.length > 1 ? 's' : ''} received!
+                    </h3>
+                    <p className="text-sm opacity-90">
+                      From {newFileNotifications.map(f => f.senderName || f.senderEmail.split('@')[0]).join(', ')}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowNotification(false)
+                    setNewFileNotifications([])
+                  }}
+                  className="bg-white/20 hover:bg-white/30 rounded-full p-2 transition-colors touch-manipulation"
+                  aria-label="Dismiss notification"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-6 mb-8">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <h1 className="text-2xl md:text-3xl font-bold">Received Files</h1>
+              <div className="flex items-center gap-4">
+                <h1 className="text-2xl md:text-3xl font-bold">Received Files</h1>
+                {isConnected && (
+                  <div className="flex items-center gap-2 text-sm text-green-600">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    Live Updates
+                  </div>
+                )}
+              </div>
               <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-500">
                   {filteredAndSortedFiles.length} of {receivedFiles.length} files
+                  {lastUpdate && (
+                    <span className="ml-2 text-xs">
+                      • Updated {lastUpdate.toLocaleTimeString()}
+                    </span>
+                  )}
                 </div>
                 <button
-                  onClick={() => window.location.reload()}
-                  className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded-lg transition-colors text-sm touch-manipulation"
+                  onClick={() => fetchReceivedFiles()}
+                  disabled={loading}
+                  className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 py-2 rounded-lg transition-colors text-sm touch-manipulation disabled:cursor-not-allowed"
                   title="Refresh files"
                 >
-                  🔄 Refresh
+                  {loading ? "🔄" : "🔄 Refresh"}
                 </button>
               </div>
             </div>
@@ -520,26 +680,35 @@ export default function Receive() {
                         )}
 
                         <div className="flex gap-2 w-full sm:w-auto">
+                          {file.type.startsWith('image/') && (
+                            <button
+                              onClick={() => handlePreview(file)}
+                              disabled={actionLoading === file.id}
+                              className="flex-1 sm:flex-none bg-purple-500 hover:bg-purple-600 disabled:bg-purple-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
+                            >
+                              {actionLoading === file.id ? "Loading..." : "👁️ Preview"}
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDownload(file)}
                             disabled={actionLoading === file.id}
                             className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
                           >
-                            {actionLoading === file.id ? "Processing..." : "Download"}
+                            {actionLoading === file.id ? "Processing..." : "⬇️ Download"}
                           </button>
                           <button
                             onClick={() => handleView(file)}
                             disabled={actionLoading === file.id}
                             className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
                           >
-                            {actionLoading === file.id ? "Loading..." : "View"}
+                            {actionLoading === file.id ? "Loading..." : "🔗 Open"}
                           </button>
                           <button
                             onClick={() => handleDelete(file)}
                             disabled={actionLoading === file.id}
                             className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed touch-manipulation"
                           >
-                            {actionLoading === file.id ? "Deleting..." : "Delete"}
+                            {actionLoading === file.id ? "Deleting..." : "🗑️ Delete"}
                           </button>
                         </div>
                       </div>
@@ -573,6 +742,98 @@ export default function Receive() {
           </div>
         </div>
       </div>
+
+      {/* File Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-3">
+                <div className="text-2xl">{getFileIcon(previewFile.type)}</div>
+                <div>
+                  <h3 className="font-semibold text-lg truncate max-w-md">{previewFile.name}</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {formatFileSize(previewFile.size)} • From {previewFile.senderName || previewFile.senderEmail}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDownload(previewFile)}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors text-sm touch-manipulation"
+                >
+                  ⬇️ Download
+                </button>
+                <button
+                  onClick={() => {
+                    setPreviewFile(null)
+                    setPreviewUrl(null)
+                  }}
+                  className="bg-gray-500 hover:bg-gray-600 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors touch-manipulation"
+                  aria-label="Close preview"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 max-h-[70vh] overflow-auto">
+              {previewLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                    <p>Loading preview...</p>
+                  </div>
+                </div>
+              ) : previewUrl ? (
+                <div className="flex justify-center">
+                  {previewFile.type.startsWith('image/') ? (
+                    <img
+                      src={previewUrl}
+                      alt={previewFile.name}
+                      className="max-w-full max-h-[60vh] object-contain rounded-lg"
+                    />
+                  ) : previewFile.type.includes('pdf') ? (
+                    <iframe
+                      src={previewUrl}
+                      className="w-full h-[60vh] border rounded-lg"
+                      title={`Preview of ${previewFile.name}`}
+                    />
+                  ) : (
+                    <div className="text-center p-8">
+                      <div className="text-6xl mb-4">{getFileIcon(previewFile.type)}</div>
+                      <p className="text-gray-600 dark:text-gray-400">
+                        Preview not available for this file type
+                      </p>
+                      <button
+                        onClick={() => handleDownload(previewFile)}
+                        className="mt-4 bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors touch-manipulation"
+                      >
+                        Download File Instead
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center p-8">
+                  <div className="text-6xl mb-4">⚠️</div>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    Failed to load preview
+                  </p>
+                  <button
+                    onClick={() => handleDownload(previewFile)}
+                    className="mt-4 bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors touch-manipulation"
+                  >
+                    Download File
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Decryption Modal */}
       {decryptingFile && (

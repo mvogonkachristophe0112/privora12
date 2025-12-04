@@ -4,11 +4,28 @@ import { useState } from "react"
 import { useSession, signOut } from "next-auth/react"
 import Link from "next/link"
 import { useLanguage } from "@/lib/language-context"
+import { useNotifications } from "@/lib/notification-context"
 
 export function Navbar() {
   const { data: session } = useSession()
   const { t } = useLanguage()
+  const { newFileCount, clearNewFiles } = useNotifications()
   const [isOpen, setIsOpen] = useState(false)
+
+  const NavLink = ({ href, children, badge, onClick }: { href: string, children: React.ReactNode, badge?: number, onClick?: () => void }) => (
+    <Link
+      href={href}
+      className="hover:text-primary-200 transition-colors text-sm lg:text-base relative"
+      onClick={onClick}
+    >
+      {children}
+      {badge && badge > 0 && (
+        <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center animate-pulse">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </Link>
+  )
 
   return (
     <nav className="bg-gradient-to-r from-blue-600 to-green-600 text-white shadow-lg sticky top-0 z-50">
@@ -35,9 +52,13 @@ export function Navbar() {
                 <Link href="/connections" className="hover:text-primary-200 transition-colors text-sm lg:text-base">
                   👥 Connections
                 </Link>
-                <Link href="/receive" className="hover:text-primary-200 transition-colors text-sm lg:text-base">
+                <NavLink
+                  href="/receive"
+                  badge={newFileCount}
+                  onClick={clearNewFiles}
+                >
                   {t('common.download')}
-                </Link>
+                </NavLink>
                 <Link href="/manager" className="hover:text-primary-200 transition-colors text-sm lg:text-base">
                   {t('nav.manager')}
                 </Link>
@@ -108,8 +129,20 @@ export function Navbar() {
                   <Link href="/connections" className="hover:text-primary-200 transition-colors py-2" onClick={() => setIsOpen(false)}>
                     👥 Connections
                   </Link>
-                  <Link href="/receive" className="hover:text-primary-200 transition-colors py-2" onClick={() => setIsOpen(false)}>
+                  <Link
+                    href="/receive"
+                    className="hover:text-primary-200 transition-colors py-2 relative"
+                    onClick={() => {
+                      clearNewFiles()
+                      setIsOpen(false)
+                    }}
+                  >
                     {t('common.download')}
+                    {newFileCount > 0 && (
+                      <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-1 animate-pulse">
+                        {newFileCount > 99 ? '99+' : newFileCount}
+                      </span>
+                    )}
                   </Link>
                   <Link href="/manager" className="hover:text-primary-200 transition-colors py-2" onClick={() => setIsOpen(false)}>
                     {t('nav.manager')}
