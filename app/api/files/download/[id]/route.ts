@@ -48,10 +48,45 @@ export async function GET(
       return NextResponse.json({ error: "File not found or access denied" }, { status: 404 })
     }
 
-    // Fetch file from blob storage
-    const response = await fetch(file.url)
+    // Fetch file from blob storage with timeout
+    console.log('Fetching file from storage:', file.url)
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 25000) // 25 second timeout
+
+    let response: Response
+    try {
+      response = await fetch(file.url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Privora12-Download/1.0'
+        }
+      })
+    } catch (fetchError) {
+      clearTimeout(timeoutId)
+      console.error('File fetch error:', fetchError)
+
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        return NextResponse.json({ error: "Download request timed out. File may be too large or storage is slow." }, { status: 408 })
+      }
+
+      return NextResponse.json({
+        error: "Failed to fetch file from storage",
+        details: fetchError instanceof Error ? fetchError.message : 'Unknown error'
+      }, { status: 500 })
+    }
+
+    clearTimeout(timeoutId)
+
+    console.log('Storage response status:', response.status)
+
     if (!response.ok) {
-      return NextResponse.json({ error: "Failed to fetch file from storage" }, { status: 500 })
+      const errorText = await response.text().catch(() => 'Unknown error')
+      console.error('Storage response error:', response.status, errorText)
+      return NextResponse.json({
+        error: `Failed to fetch file from storage: ${response.status} ${response.statusText}`,
+        details: errorText
+      }, { status: 502 })
     }
 
     let fileData: ArrayBuffer

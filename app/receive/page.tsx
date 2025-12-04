@@ -257,35 +257,121 @@ export default function Receive() {
       return
     }
 
-    await downloadFile(file, "")
+    await downloadFileWithRetry(file, "", 3) // Retry up to 3 times
+  }
+
+  const downloadFileWithRetry = async (file: ReceivedFile, key: string, maxRetries: number) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Download attempt ${attempt}/${maxRetries} for file: ${file.name}`)
+        await downloadFile(file, key)
+        return // Success, exit retry loop
+      } catch (error) {
+        console.error(`Download attempt ${attempt} failed:`, error)
+
+        if (attempt === maxRetries) {
+          // Last attempt failed, show final error
+          const errorMessage = error instanceof Error ? error.message : 'Download failed after multiple attempts'
+          setDecryptionError(errorMessage)
+          alert(`Download failed after ${maxRetries} attempts: ${errorMessage}`)
+          break
+        }
+
+        // Wait before retry (exponential backoff)
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000)
+        console.log(`Waiting ${delay}ms before retry...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
   }
 
   const downloadFile = async (file: ReceivedFile, key: string) => {
+    let timeoutId: NodeJS.Timeout | null = null
+
     try {
       setActionLoading(file.id)
       const url = `/api/files/download/${file.fileId}${key ? `?key=${encodeURIComponent(key)}` : ''}`
-      const response = await fetch(url)
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || 'Download failed')
+      console.log('Starting download for file:', file.name, 'URL:', url)
+
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error('Download request timed out after 30 seconds'))
+        }, 30000) // 30 second timeout
+      })
+
+      // Race between fetch and timeout
+      const response = await Promise.race([
+        fetch(url),
+        timeoutPromise
+      ]) as Response
+
+      // Clear timeout since we got a response
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        timeoutId = null
       }
 
+      console.log('Download response status:', response.status)
+
+      if (!response.ok) {
+        let errorMessage = 'Download failed'
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.error || errorMessage
+        } catch {
+          // If we can't parse error JSON, use status text
+          errorMessage = `Download failed: ${response.status} ${response.statusText}`
+        }
+        throw new Error(errorMessage)
+      }
+
+      console.log('Starting blob creation...')
       const blob = await response.blob()
+      console.log('Blob created, size:', blob.size)
+
+      if (blob.size === 0) {
+        throw new Error('Downloaded file is empty')
+      }
+
       const downloadUrl = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = downloadUrl
       a.download = file.originalName || file.name
+      a.style.display = 'none'
+
+      console.log('Triggering download...')
       document.body.appendChild(a)
       a.click()
-      window.URL.revokeObjectURL(downloadUrl)
-      document.body.removeChild(a)
+
+      // Clean up
+      setTimeout(() => {
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(downloadUrl)
+        console.log('Download cleanup completed')
+      }, 100)
 
       setDecryptingFile(null)
       setDecryptionKey("")
+
+      console.log('Download completed successfully')
+
     } catch (error) {
       console.error('Download error:', error)
-      setDecryptionError(error instanceof Error ? error.message : 'Download failed')
+
+      // Clear timeout if it exists
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+
+      const errorMessage = error instanceof Error ? error.message : 'Download failed'
+      setDecryptionError(errorMessage)
+
+      // Show user-friendly alert for critical errors
+      if (errorMessage.includes('timed out') || errorMessage.includes('Failed to fetch')) {
+        alert(`Download failed: ${errorMessage}. Please check your internet connection and try again.`)
+      }
     } finally {
       setActionLoading(null)
     }
@@ -337,7 +423,7 @@ export default function Receive() {
       }
     } else {
       // Handle downloading decrypted file
-      await downloadFile(decryptingFile, decryptionKey.trim())
+      await downloadFileWithRetry(decryptingFile, decryptionKey.trim(), 3)
     }
   }
 
@@ -388,8 +474,8 @@ export default function Receive() {
     } catch (error) {
       console.error('Preview error:', error)
       setPreviewFile(null)
-      // Fallback to download
-      await downloadFile(file, decryptionKey || "")
+      // Fallback to download with retry
+      await downloadFileWithRetry(file, decryptionKey || "", 2)
     } finally {
       setPreviewLoading(false)
     }
@@ -427,7 +513,7 @@ export default function Receive() {
     } catch (error) {
       console.error('View error:', error)
       // Fallback to download if view fails
-      await downloadFile(file, "")
+      await downloadFileWithRetry(file, "", 2)
     } finally {
       setActionLoading(null)
     }
