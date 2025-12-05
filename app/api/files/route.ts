@@ -44,8 +44,15 @@ export async function POST(request: NextRequest) {
     const recipients = JSON.parse(formData.get('recipients') as string || '[]')
     const shareMode = formData.get('shareMode') as string
 
+    console.log('=== UPLOAD REQUEST START ===')
+    console.log('File provided:', !!file)
+    console.log('File name:', file?.name)
+    console.log('File size:', file?.size)
     console.log('Parsed recipients:', recipients)
+    console.log('Recipients length:', recipients.length)
     console.log('Share mode:', shareMode)
+    console.log('Encrypt:', encrypt)
+    console.log('Encryption key provided:', !!encryptionKey)
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
@@ -54,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Check file size limit (500MB)
     const maxSize = 500 * 1024 * 1024 // 500MB
     if (file.size > maxSize) {
-      return NextResponse.json({ error: "File size exceeds 100MB limit" }, { status: 400 })
+      return NextResponse.json({ error: `File size exceeds ${maxSize / (1024 * 1024)}MB limit` }, { status: 400 })
     }
 
     console.log('Starting file processing...')
@@ -115,22 +122,30 @@ export async function POST(request: NextRequest) {
 
     // Handle sharing if recipients are provided
     if (shareMode === 'share' && recipients.length > 0) {
-      console.log('Creating file shares for recipients:', recipients)
+      console.log('=== SHARING LOGIC START ===')
+      console.log('Share mode is "share" and recipients provided:', recipients.length, 'recipients')
       const shareResults = []
 
       for (const email of recipients) {
+        console.log('--- Processing recipient:', email, '---')
         // Normalize email to lowercase for consistency
         const normalizedEmail = email.trim().toLowerCase()
-        console.log('Processing recipient:', email, '-> normalized:', normalizedEmail)
+        console.log('Original email:', email, '-> Normalized:', normalizedEmail)
 
         // Validate that recipient exists as a user
+        console.log('Checking if user exists in database...')
         const recipientUser = await prisma.user.findUnique({
           where: { email: normalizedEmail },
           select: { id: true, email: true, name: true }
         })
 
+        console.log('Database query result:', recipientUser ? 'USER FOUND' : 'USER NOT FOUND')
+        if (recipientUser) {
+          console.log('User details:', { id: recipientUser.id, email: recipientUser.email, name: recipientUser.name })
+        }
+
         if (!recipientUser) {
-          console.error('Recipient user not found:', normalizedEmail)
+          console.error('❌ RECIPIENT VALIDATION FAILED: User not found for email:', normalizedEmail)
           shareResults.push({
             email: normalizedEmail,
             success: false,
@@ -138,6 +153,8 @@ export async function POST(request: NextRequest) {
           })
           continue
         }
+
+        console.log('✅ Recipient validation passed for:', normalizedEmail)
 
         console.log('Found recipient user:', recipientUser.id, recipientUser.email)
 
@@ -184,7 +201,19 @@ export async function POST(request: NextRequest) {
       // Log share results
       const successfulShares = shareResults.filter(r => r.success).length
       const failedShares = shareResults.filter(r => !r.success).length
-      console.log(`File shares: ${successfulShares} successful, ${failedShares} failed`)
+      console.log(`=== SHARING RESULTS ===`)
+      console.log(`Total recipients processed: ${recipients.length}`)
+      console.log(`Successful shares: ${successfulShares}`)
+      console.log(`Failed shares: ${failedShares}`)
+
+      if (failedShares > 0) {
+        console.log('Failed share details:')
+        shareResults.filter(r => !r.success).forEach(result => {
+          console.log(`  - ${result.email}: ${result.error}`)
+        })
+      }
+
+      console.log('=== SHARING LOGIC END ===')
 
       // Emit real-time notifications for successful shares
       const successfulShareResults = shareResults.filter(r => r.success)
@@ -201,11 +230,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const responseMessage = shareMode === 'share' ? 'File uploaded and shared successfully' : 'File uploaded successfully'
+    console.log('=== UPLOAD RESPONSE ===')
+    console.log('File ID:', newFile.id)
+    console.log('File name:', newFile.name)
+    console.log('Share mode:', shareMode)
+    console.log('Response message:', responseMessage)
+    console.log('=== UPLOAD REQUEST END ===\n')
+
     return NextResponse.json({
       ...newFile,
       blobUrl: blob.url,
       success: true,
-      message: shareMode === 'share' ? 'File uploaded and shared successfully' : 'File uploaded successfully'
+      message: responseMessage
     })
 
   } catch (error) {
