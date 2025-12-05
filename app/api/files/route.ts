@@ -152,7 +152,6 @@ export async function POST(request: NextRequest) {
               userId: session.user.id, // Sender ID
               sharedWithEmail: normalizedEmail, // Receiver email
               permissions: 'view', // Default permission
-              shareToken: shareToken, // Unique share link token
               expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
             }
           })
