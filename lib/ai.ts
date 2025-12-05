@@ -21,7 +21,7 @@ export async function generateFileTags(file: FileMetadata): Promise<string[]> {
   // Size-based tags
   if (file.size < 1024 * 1024) { // < 1MB
     tags.push('small-file')
-  } else if (file.size < 100 * 1024 * 1024) { // < 100MB
+  } else if (file.size < 500 * 1024 * 1024) { // < 500MB
     tags.push('medium-file')
   } else {
     tags.push('large-file')

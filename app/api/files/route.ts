@@ -51,8 +51,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
     }
 
-    // Check file size limit (100MB)
-    const maxSize = 100 * 1024 * 1024 // 100MB
+    // Check file size limit (500MB)
+    const maxSize = 500 * 1024 * 1024 // 500MB
     if (file.size > maxSize) {
       return NextResponse.json({ error: "File size exceeds 100MB limit" }, { status: 400 })
     }

@@ -772,7 +772,7 @@ export default function Upload() {
                     <p className="text-sm text-gray-500 mb-4">
                       Supported formats: {fileTypes.find(t => t.id === selectedType)?.accept.replace(/\./g, "").toUpperCase()}
                     </p>
-                    <p className="text-sm text-gray-500 mb-4">Maximum file size: 100MB per file</p>
+                    <p className="text-sm text-gray-500 mb-4">Maximum file size: 500MB per file</p>
 
                     {/* Action buttons */}
                     <div className="flex flex-wrap justify-center gap-3 mt-4">
