@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { useSession } from "next-auth/react"
 import { usePresence } from "@/lib/presence-context"
-const { socket } = usePresence()
 import { useNotifications } from "@/lib/notification-context"
 
 interface ReceivedFile {
