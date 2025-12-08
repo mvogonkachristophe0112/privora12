@@ -35,13 +35,45 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const prisma = await getPrismaClient()
-    const formData = await request.formData()
+    let prisma
+    try {
+      prisma = await getPrismaClient()
+    } catch (dbError) {
+      console.error('Database connection failed:', dbError)
+      return NextResponse.json({
+        error: "Database connection failed",
+        details: "Unable to connect to database. Please try again later."
+      }, { status: 503 })
+    }
+
+    let formData
+    try {
+      formData = await request.formData()
+    } catch (formError) {
+      console.error('Failed to parse form data:', formError)
+      return NextResponse.json({
+        error: "Invalid form data",
+        details: "Unable to process the uploaded file data."
+      }, { status: 400 })
+    }
+
     const file = formData.get('file') as File
     const encrypt = formData.get('encrypt') === 'true'
     const encryptionKey = formData.get('encryptionKey') as string
     const type = formData.get('type') as string
-    const recipients = JSON.parse(formData.get('recipients') as string || '[]')
+
+    let recipients = []
+    try {
+      const recipientsStr = formData.get('recipients') as string || '[]'
+      recipients = JSON.parse(recipientsStr)
+    } catch (parseError) {
+      console.error('Failed to parse recipients:', parseError)
+      return NextResponse.json({
+        error: "Invalid recipients format",
+        details: "Recipients must be a valid JSON array of email addresses."
+      }, { status: 400 })
+    }
+
     const shareMode = formData.get('shareMode') as string
 
     console.log('=== UPLOAD REQUEST START ===')
@@ -97,106 +129,165 @@ export async function POST(request: NextRequest) {
 
     console.log('Saving to database...')
     let newFile
-    try {
-      // Save to database
-      newFile = await prisma.file.create({
-        data: {
-          name: file.name,
-          originalName: file.name,
-          size: file.size,
-          type: file.type,
-          url: blob.url,
-          encrypted: encrypt,
-          encryptionKey: encrypt ? finalEncryptionKey : null,
-          fileType: type,
-          userId: session.user.id
+    const maxRetries = 3
+    let lastError
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Database save attempt ${attempt}/${maxRetries}`)
+        // Save to database
+        newFile = await prisma.file.create({
+          data: {
+            name: file.name,
+            originalName: file.name,
+            size: file.size,
+            type: file.type,
+            url: blob.url,
+            encrypted: encrypt,
+            encryptionKey: encrypt ? finalEncryptionKey : null,
+            fileType: type,
+            userId: session.user.id
+          }
+        })
+        console.log('✅ Database save successful, file ID:', newFile.id)
+        break // Success, exit retry loop
+      } catch (dbError) {
+        console.error(`❌ Database save attempt ${attempt} failed:`, dbError)
+        lastError = dbError
+
+        if (attempt === maxRetries) {
+          console.error('❌ All database save attempts failed')
+          // Note: Vercel Blob doesn't have a delete API easily accessible
+          return NextResponse.json({
+            error: "Failed to save file to database",
+            details: "Database operation failed after multiple attempts. Please try again."
+          }, { status: 500 })
         }
-      })
-      console.log('Database save successful, file ID:', newFile.id)
-    } catch (dbError) {
-      console.error('Database save failed:', dbError)
-      // Clean up blob if database save fails
-      // Note: Vercel Blob doesn't have a delete API easily accessible
-      throw new Error('Failed to save file to database')
+
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000))
+      }
     }
+
+    // Initialize sharing results
+    let shareResults: any[] = []
 
     // Handle sharing if recipients are provided
     if (shareMode === 'share' && recipients.length > 0) {
       console.log('=== SHARING LOGIC START ===')
       console.log('Share mode is "share" and recipients provided:', recipients.length, 'recipients')
-      const shareResults = []
 
+      // Validate recipients array
+      if (!Array.isArray(recipients)) {
+        console.error('❌ Recipients is not an array:', recipients)
+        return NextResponse.json({
+          error: "Invalid recipients format",
+          details: "Recipients must be an array of email addresses"
+        }, { status: 400 })
+      }
+      const validRecipients = []
+      const invalidRecipients = []
+
+      // Pre-validate all recipients
       for (const email of recipients) {
-        console.log('--- Processing recipient:', email, '---')
-        // Normalize email to lowercase for consistency
-        const normalizedEmail = email.trim().toLowerCase()
-        console.log('Original email:', email, '-> Normalized:', normalizedEmail)
-
-        // Validate that recipient exists as a user
-        console.log('Checking if user exists in database...')
-        const recipientUser = await prisma.user.findUnique({
-          where: { email: normalizedEmail },
-          select: { id: true, email: true, name: true }
-        })
-
-        console.log('Database query result:', recipientUser ? 'USER FOUND' : 'USER NOT FOUND')
-        if (recipientUser) {
-          console.log('User details:', { id: recipientUser.id, email: recipientUser.email, name: recipientUser.name })
-        }
-
-        if (!recipientUser) {
-          console.error('❌ RECIPIENT VALIDATION FAILED: User not found for email:', normalizedEmail)
-          shareResults.push({
-            email: normalizedEmail,
-            success: false,
-            error: 'User not found'
-          })
+        if (!email || typeof email !== 'string') {
+          console.warn('⚠️ Invalid recipient format:', email)
+          invalidRecipients.push({ email, reason: 'Invalid format' })
           continue
         }
 
-        console.log('✅ Recipient validation passed for:', normalizedEmail)
+        const normalizedEmail = email.trim().toLowerCase()
 
-        console.log('Found recipient user:', recipientUser.id, recipientUser.email)
+        // Basic email format validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        if (!emailRegex.test(normalizedEmail)) {
+          console.warn('⚠️ Invalid email format:', email)
+          invalidRecipients.push({ email, reason: 'Invalid email format' })
+          continue
+        }
+
+        validRecipients.push({ original: email, normalized: normalizedEmail })
+      }
+
+      console.log(`📊 Pre-validation results: ${validRecipients.length} valid, ${invalidRecipients.length} invalid`)
+
+      // Process valid recipients
+      for (const recipient of validRecipients) {
+        console.log('--- Processing recipient:', recipient.original, '---')
 
         try {
-          // Generate unique share token
-          const shareToken = `share_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          // Check if user exists in database
+          console.log('Checking if user exists in database...')
+          const recipientUser = await prisma.user.findUnique({
+            where: { email: recipient.normalized },
+            select: { id: true, email: true, name: true }
+          })
 
-          // Create share record with sender information
-          const share = await prisma.fileShare.create({
-            data: {
+          if (!recipientUser) {
+            console.warn('⚠️ RECIPIENT NOT FOUND:', recipient.normalized)
+            shareResults.push({
+              email: recipient.original,
+              success: false,
+              error: 'User not registered in the system'
+            })
+            continue
+          }
+
+          console.log('✅ User found:', recipientUser.email, '(ID:', recipientUser.id + ')')
+
+          try {
+            // Create share record with sender information
+            const share = await prisma.fileShare.create({
+              data: {
+                fileId: newFile.id,
+                userId: session.user.id, // Sender ID
+                sharedWithEmail: recipient.normalized, // Receiver email
+                permissions: 'view', // Default permission
+                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+              }
+            })
+
+            console.log('✅ Successfully created file share:', {
+              shareId: share.id,
               fileId: newFile.id,
-              userId: session.user.id, // Sender ID
-              sharedWithEmail: normalizedEmail, // Receiver email
-              permissions: 'view', // Default permission
-              expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-            }
-          })
+              senderId: session.user.id,
+              receiverEmail: recipient.normalized,
+              receiverUserId: recipientUser.id
+            })
 
-          console.log('Successfully created file share:', {
-            shareId: share.id,
-            fileId: newFile.id,
-            senderId: session.user.id,
-            receiverEmail: normalizedEmail,
-            receiverUserId: recipientUser.id
-          })
+            shareResults.push({
+              email: recipient.original,
+              success: true,
+              share,
+              recipientUser
+            })
 
+          } catch (shareError) {
+            console.error('❌ Error creating file share for', recipient.original, ':', shareError)
+            shareResults.push({
+              email: recipient.original,
+              success: false,
+              error: `Database error: ${shareError instanceof Error ? shareError.message : 'Unknown error'}`
+            })
+          }
+        } catch (validationError) {
+          console.error('❌ Error validating recipient', recipient.original, ':', validationError)
           shareResults.push({
-            email: normalizedEmail,
-            success: true,
-            share,
-            recipientUser
-          })
-
-        } catch (shareError) {
-          console.error('Error creating file share for', normalizedEmail, ':', shareError)
-          shareResults.push({
-            email: normalizedEmail,
+            email: recipient.original,
             success: false,
-            error: shareError
+            error: 'Validation failed'
           })
         }
       }
+
+      // Handle invalid recipients
+      invalidRecipients.forEach(invalid => {
+        shareResults.push({
+          email: invalid.email,
+          success: false,
+          error: invalid.reason
+        })
+      })
 
       // Log share results
       const successfulShares = shareResults.filter(r => r.success).length
@@ -230,11 +321,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const responseMessage = shareMode === 'share' ? 'File uploaded and shared successfully' : 'File uploaded successfully'
+    // Prepare response with detailed sharing results
+    const successfulShares = shareResults?.filter(r => r.success).length || 0
+    const failedShares = shareResults?.filter(r => !r.success).length || 0
+
+    let responseMessage = 'File uploaded successfully'
+    if (shareMode === 'share') {
+      if (successfulShares > 0 && failedShares === 0) {
+        responseMessage = `${successfulShares} file(s) uploaded and shared successfully`
+      } else if (successfulShares > 0 && failedShares > 0) {
+        responseMessage = `${successfulShares} file(s) uploaded and shared successfully, ${failedShares} failed`
+      } else if (failedShares > 0) {
+        responseMessage = `File uploaded but sharing failed for ${failedShares} recipient(s)`
+      }
+    }
+
     console.log('=== UPLOAD RESPONSE ===')
     console.log('File ID:', newFile.id)
     console.log('File name:', newFile.name)
     console.log('Share mode:', shareMode)
+    console.log('Successful shares:', successfulShares)
+    console.log('Failed shares:', failedShares)
     console.log('Response message:', responseMessage)
     console.log('=== UPLOAD REQUEST END ===\n')
 
@@ -242,7 +349,13 @@ export async function POST(request: NextRequest) {
       ...newFile,
       blobUrl: blob.url,
       success: true,
-      message: responseMessage
+      message: responseMessage,
+      sharingResults: shareMode === 'share' ? {
+        totalRecipients: recipients?.length || 0,
+        successfulShares,
+        failedShares,
+        results: shareResults
+      } : null
     })
 
   } catch (error) {

@@ -382,11 +382,22 @@ export default function Upload() {
 
       if (res.ok) {
         const data = await res.json()
-        const successMessage = shareMode === "share"
-          ? "File uploaded and shared successfully!"
-          : "File uploaded successfully!"
-        setMessage(successMessage)
+        setMessage(data.message || "Upload completed")
         setUploadProgress(100)
+
+        // Show detailed sharing results if available
+        if (data.sharingResults) {
+          const { totalRecipients, successfulShares, failedShares, results } = data.sharingResults
+          console.log('Sharing results:', data.sharingResults)
+
+          if (failedShares > 0) {
+            const failedRecipients = results.filter((r: any) => !r.success)
+            console.log('Failed recipients:', failedRecipients)
+
+            // Show detailed error message
+            setMessage(`${successfulShares} file(s) shared successfully, ${failedShares} failed. Check console for details.`)
+          }
+        }
 
         // Reset form
         setFiles([])
@@ -398,6 +409,7 @@ export default function Upload() {
         setNewRecipient("")
       } else {
         const errorData = await res.json().catch(() => ({}))
+        console.error('Upload failed:', errorData)
         setMessage(errorData.error || "Upload failed")
       }
     } catch (error) {
