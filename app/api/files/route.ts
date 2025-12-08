@@ -80,11 +80,14 @@ export async function POST(request: NextRequest) {
     console.log('File provided:', !!file)
     console.log('File name:', file?.name)
     console.log('File size:', file?.size)
+    console.log('Raw recipients from form:', formData.get('recipients'))
     console.log('Parsed recipients:', recipients)
     console.log('Recipients length:', recipients.length)
     console.log('Share mode:', shareMode)
     console.log('Encrypt:', encrypt)
     console.log('Encryption key provided:', !!encryptionKey)
+    console.log('Session user email:', session.user.email)
+    console.log('Session user id:', session.user.id)
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
@@ -211,9 +214,18 @@ export async function POST(request: NextRequest) {
 
       console.log(`📊 Pre-validation results: ${validRecipients.length} valid, ${invalidRecipients.length} invalid`)
 
+      // Debug: Check all users in database
+      const allUsers = await prisma.user.findMany({
+        select: { id: true, email: true, name: true }
+      })
+      console.log('All users in database:', allUsers.length)
+      allUsers.forEach(user => {
+        console.log(`  User: ${user.email} (ID: ${user.id})`)
+      })
+
       // Process valid recipients
       for (const recipient of validRecipients) {
-        console.log('--- Processing recipient:', recipient.original, '---')
+        console.log('--- Processing recipient:', recipient.original, 'normalized:', recipient.normalized, '---')
 
         try {
           // Check if user exists in database
