@@ -155,7 +155,7 @@ export default function SwipeableFileCard({
           </div>
 
           {/* Action buttons for desktop or when not swiping */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 md:hidden">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 hidden md:flex">
             {file.encrypted && (
               <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs font-medium self-start sm:self-center">
                 🔒 Encrypted

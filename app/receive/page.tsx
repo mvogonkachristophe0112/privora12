@@ -9,11 +9,8 @@ import DownloadQueue from "@/components/DownloadQueue"
 import SwipeableFileCard from "@/components/SwipeableFileCard"
 import { ToastProvider, useToast } from "@/components/Toast"
 import ConnectionStatus from "@/components/ConnectionStatus"
-import VirtualizedFileList from "@/components/VirtualizedFileList"
 import { Loading } from "@/components/Loading"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
-import { deliveryTracker } from "@/lib/delivery-tracker"
-import DeliveryStatusDashboard from "@/components/DeliveryStatusDashboard"
 import LazyImage from "@/components/LazyImage"
 
 interface ReceivedFile {
@@ -358,15 +355,9 @@ function ReceiveContent() {
       return
     }
 
-    // Track file download for delivery status
+    // Track file download for delivery status (placeholder for future implementation)
     if (session?.user?.email) {
-      const deliveries = deliveryTracker.getShareDeliveries(file.id)
-      const userDelivery = deliveries.find(d => d.recipientEmail === session.user.email)
-
-      if (userDelivery) {
-        deliveryTracker.markAsDownloaded(userDelivery.id)
-        console.log(`⬇️ File downloaded: ${file.name} by ${session.user.email}`)
-      }
+      console.log(`⬇️ File downloaded: ${file.name} by ${session.user.email}`)
     }
 
     // Add to download queue instead of downloading immediately
@@ -628,16 +619,9 @@ function ReceiveContent() {
       return
     }
 
-    // Track file access for delivery status
+    // Track file access for delivery status (placeholder for future implementation)
     if (session?.user?.email) {
-      // Find delivery record for this file and user
-      const deliveries = deliveryTracker.getShareDeliveries(file.id)
-      const userDelivery = deliveries.find(d => d.recipientEmail === session.user.email)
-
-      if (userDelivery) {
-        deliveryTracker.markAsViewed(userDelivery.id)
-        console.log(`👁️ File viewed: ${file.name} by ${session.user.email}`)
-      }
+      console.log(`👁️ File viewed: ${file.name} by ${session.user.email}`)
     }
 
     // For non-encrypted files, try to preview
@@ -1415,10 +1399,6 @@ function ReceiveContent() {
             </div>
           </div>
 
-          {/* Delivery Status Dashboard */}
-          <div className="mt-8">
-            <DeliveryStatusDashboard showAnalytics={false} />
-          </div>
         </div>
       </div>
 
