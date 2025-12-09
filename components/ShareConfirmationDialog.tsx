@@ -1,8 +1,21 @@
 "use client"
 
 import React, { useState, useEffect } from 'react'
-import { useSession } from 'next-auth/react'
 import { Loading } from './Loading'
+
+interface FilePreview {
+  name: string
+  size: number
+  type: string
+  encrypted: boolean
+}
+
+interface Recipient {
+  email: string
+  name?: string
+  status: 'valid' | 'invalid' | 'pending' | 'not-registered'
+  isOnline?: boolean
+}
 
 interface FilePreview {
   name: string
@@ -46,7 +59,6 @@ export default function ShareConfirmationDialog({
   recipientDetails,
   isLoading = false
 }: ShareConfirmationDialogProps) {
-  const { data: session } = useSession()
   const [shareOptions, setShareOptions] = useState<ShareOptions>({
     sendNotifications: true,
     notificationChannels: ['email'],
@@ -254,7 +266,7 @@ export default function ShareConfirmationDialog({
                       <label key={key} className="flex items-center gap-2">
                         <input
                           type="checkbox"
-                          checked={shareOptions.notificationChannels.includes(key as any)}
+                          checked={shareOptions.notificationChannels.includes(key as 'email' | 'push' | 'sms')}
                           onChange={(e) => {
                             const channel = key as 'email' | 'push' | 'sms'
                             setShareOptions(prev => ({

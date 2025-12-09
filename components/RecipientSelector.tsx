@@ -49,33 +49,6 @@ export default function RecipientSelector({
   // Email validation regex
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-  // Convert recipients array to Recipient objects
-  useEffect(() => {
-    const updateRecipients = async () => {
-      setIsValidating(true)
-      try {
-        const recipientObjects = await Promise.all(
-          recipients.map(async (email) => {
-            const validation = await validateRecipient(email)
-            return {
-              email,
-              ...validation
-            }
-          })
-        )
-        setRecipientList(recipientObjects)
-      } finally {
-        setIsValidating(false)
-      }
-    }
-
-    if (recipients.length > 0) {
-      updateRecipients()
-    } else {
-      setRecipientList([])
-    }
-  }, [recipients])
-
   // Validate recipient email
   const validateRecipient = useCallback(async (email: string): Promise<Omit<Recipient, 'email'>> => {
     const normalizedEmail = email.trim().toLowerCase()
@@ -112,9 +85,36 @@ export default function RecipientSelector({
       console.warn('Failed to validate recipient:', error)
       return { status: 'pending' }
     }
-  }, [session?.user?.email, userPresence])
+  }, [session?.user?.email, userPresence, emailRegex])
 
-  // Search for user suggestions
+ // Convert recipients array to Recipient objects
+ useEffect(() => {
+   const updateRecipients = async () => {
+     setIsValidating(true)
+     try {
+       const recipientObjects = await Promise.all(
+         recipients.map(async (email) => {
+           const validation = await validateRecipient(email)
+           return {
+             email,
+             ...validation
+           }
+         })
+       )
+       setRecipientList(recipientObjects)
+     } finally {
+       setIsValidating(false)
+     }
+   }
+
+   if (recipients.length > 0) {
+     updateRecipients()
+   } else {
+     setRecipientList([])
+   }
+ }, [recipients, validateRecipient])
+
+ // Search for user suggestions
   const searchUsers = useCallback(async (query: string) => {
     if (query.length < 2) {
       setSuggestions([])
@@ -126,8 +126,8 @@ export default function RecipientSelector({
       const data = await response.json()
 
       const suggestionObjects: Recipient[] = data.users
-        .filter((user: any) => !recipients.includes(user.email))
-        .map((user: any) => ({
+        .filter((user: { email: string }) => !recipients.includes(user.email))
+        .map((user: { id: string; name?: string; email: string; image?: string }) => ({
           email: user.email,
           name: user.name,
           id: user.id,
@@ -221,7 +221,7 @@ export default function RecipientSelector({
       setBulkImportText('')
       setShowBulkImport(false)
     }
-  }, [bulkImportText, recipients, maxRecipients, onRecipientsChange])
+  }, [bulkImportText, recipients, maxRecipients, onRecipientsChange, emailRegex])
 
   // Handle suggestion click
   const handleSuggestionClick = useCallback((suggestion: Recipient) => {
