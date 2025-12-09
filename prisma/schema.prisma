@@ -10,6 +10,53 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum FilePermission {
+  VIEW
+  DOWNLOAD
+  EDIT
+}
+
+enum ShareType {
+  USER
+  GROUP
+  PUBLIC
+}
+
+enum ShareStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum EmailNotificationFrequency {
+  IMMEDIATE
+  DAILY
+  WEEKLY
+  DISABLED
+}
+
+enum EmailNotificationType {
+  NEW_SHARES
+  SHARE_UPDATES
+  EXPIRATIONS
+}
+
+enum AccessEventType {
+  VIEW
+  DOWNLOAD
+  PREVIEW
+  SHARE_ACCESS
+  BULK_OPERATION
+  ACCESS_DENIED
+}
+
+enum AccessResult {
+  SUCCESS
+  FAILURE
+  PARTIAL
+}
+
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -45,6 +92,10 @@ model User {
   image         String?
   password      String?
   role          String           @default("user")
+  // Email notification preferences
+  emailNotifications EmailNotificationFrequency @default(IMMEDIATE)
+  emailNotificationTypes EmailNotificationType[] @default([NEW_SHARES])
+  emailUnsubscribed Boolean @default(false)
   accounts      Account[]
   sessions      Session[]
   files         File[]
@@ -55,6 +106,14 @@ model User {
   auditLogs     AuditLog[]
   presence      UserPresence?
   initiatedConnections UserConnection[] @relation("initiator")
+  groups        Group[]          @relation("GroupMembers")
+  createdGroups Group[]
+  fileVersions  FileVersion[]
+  createdShares FileShare[]      @relation("ShareCreator")
+  downloadHistory DownloadHistory[]
+  downloadLogs  DownloadLog[]
+  sentEmails    EmailLog[]
+  accessLogs    FileAccessLog[]
 }
 
 model VerificationToken {
@@ -78,22 +137,80 @@ model File {
   userId        String
   user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   shares        FileShare[]
+  versions      FileVersion[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 }
 
 model FileShare {
-  id              String   @id @default(cuid())
+  id              String         @id @default(cuid())
   fileId          String
   userId          String?
+  groupId         String?
   sharedWithEmail String?
-  permissions     String   // "view", "download"
+  shareType       ShareType      @default(USER)
+  status          ShareStatus    @default(PENDING)
+  permissions     FilePermission[] // Array of permissions
   password        String?
   expiresAt       DateTime?
-  revoked         Boolean  @default(false)
-  file            File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt       DateTime @default(now())
+  maxAccessCount  Int?           // Maximum number of accesses allowed
+  accessCount     Int            @default(0) // Current access count
+  viewCount       Int            @default(0) // Number of view/preview accesses
+  downloadCount   Int            @default(0) // Number of download accesses
+  lastAccessedAt  DateTime?      // Last access timestamp
+  revoked         Boolean        @default(false)
+  createdBy       String         // User who created the share
+  file            File           @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  user            User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group           Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  creator         User           @relation("ShareCreator", fields: [createdBy], references: [id])
+  downloadLogs    DownloadLog[]
+  accessLogs      FileAccessLog[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([fileId])
+  @@index([userId])
+  @@index([groupId])
+  @@index([expiresAt])
+  @@index([revoked])
+  @@index([createdBy])
+  @@index([status])
+  @@index([sharedWithEmail])
+  @@index([lastAccessedAt])
+}
+
+model FileVersion {
+  id           String   @id @default(cuid())
+  fileId       String
+  versionNumber Int
+  name         String   // Version name or description
+  size         Int
+  url          String   // Storage URL for this version
+  changes      String?  // JSON string describing changes
+  createdBy    String
+  file         File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [createdBy], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@unique([fileId, versionNumber])
+  @@index([fileId])
+  @@index([createdBy])
+}
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  creatorId   String
+  creator     User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  members     User[]   @relation("GroupMembers")
+  fileShares  FileShare[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([creatorId])
+  @@index([name])
 }
 
 model ChatRoom {
@@ -166,4 +283,97 @@ model AuditLog {
   @@index([action])
   @@index([resource])
   @@index([createdAt])
+}
+
+model DownloadHistory {
+  id           String   @id @default(cuid())
+  userId       String
+  fileId       String
+  fileName     String
+  fileSize     Int
+  fileType     String
+  downloadedAt DateTime @default(now())
+  status       String   // "completed", "failed"
+  speed        Float?   // bytes per second
+  duration     Float?   // seconds
+  error        String?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([fileId])
+  @@index([downloadedAt])
+}
+
+model DownloadLog {
+  id           String   @id @default(cuid())
+  shareId      String
+  userId       String
+  fileId       String
+  action       String   // "attempt", "start", "complete", "fail"
+  timestamp    DateTime @default(now())
+  ipAddress    String?
+  userAgent    String?
+  metadata     String?  // JSON string for additional data
+  share        FileShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([shareId])
+  @@index([userId])
+  @@index([fileId])
+  @@index([action])
+  @@index([timestamp])
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  userId      String
+  emailType   String   // "file_share", "share_expiration", "bulk_share", "welcome"
+  recipient   String   // Email address
+  subject     String
+  status      String   @default("sent") // "sent", "delivered", "opened", "bounced", "complained"
+  sentAt      DateTime @default(now())
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  bouncedAt   DateTime?
+  error       String?
+  metadata    String?  // JSON string for additional data (fileId, shareId, etc.)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([emailType])
+  @@index([recipient])
+  @@index([status])
+  @@index([sentAt])
+}
+
+model FileAccessLog {
+  id            String         @id @default(cuid())
+  shareId       String
+  userId        String
+  fileId        String
+  eventType     AccessEventType
+  result        AccessResult   @default(SUCCESS)
+  ipAddress     String?
+  userAgent     String?
+  location      String?        // Geographic location (anonymized)
+  deviceType    String?        // "desktop", "mobile", "tablet"
+  browser       String?        // Browser name
+  os            String?        // Operating system
+  sessionId     String?        // Session identifier for grouping related events
+  duration      Int?           // Access duration in seconds (for view/preview)
+  bytesTransferred Int?        // Bytes downloaded (for partial downloads)
+  errorMessage  String?        // Error details for failed accesses
+  metadata      String?        // JSON string for additional context
+  share         FileShare      @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id])
+  createdAt     DateTime       @default(now())
+
+  @@index([shareId])
+  @@index([userId])
+  @@index([fileId])
+  @@index([eventType])
+  @@index([result])
+  @@index([createdAt])
+  @@index([sessionId])
+  @@index([ipAddress])
 }

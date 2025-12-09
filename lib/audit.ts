@@ -9,6 +9,17 @@ export enum AuditAction {
   FILE_DELETE = 'FILE_DELETE',
   FILE_SHARE = 'FILE_SHARE',
   FILE_ACCESS = 'FILE_ACCESS',
+  FILE_VIEW = 'FILE_VIEW',
+  FILE_EDIT = 'FILE_EDIT',
+  FILE_VERSION_CREATE = 'FILE_VERSION_CREATE',
+  GROUP_CREATE = 'GROUP_CREATE',
+  GROUP_JOIN = 'GROUP_JOIN',
+  SHARE_ACCESS = 'SHARE_ACCESS',
+  SHARE_EXPIRE = 'SHARE_EXPIRE',
+  SHARE_ACCEPT = 'SHARE_ACCEPT',
+  SHARE_REJECT = 'SHARE_REJECT',
+  SHARE_REVOKE = 'SHARE_REVOKE',
+  BULK_SHARE_OPERATION = 'BULK_SHARE_OPERATION',
   MESSAGE_SEND = 'MESSAGE_SEND',
   SETTINGS_CHANGE = 'SETTINGS_CHANGE',
   ADMIN_ACTION = 'ADMIN_ACTION',
@@ -219,4 +230,68 @@ export async function detectSuspiciousActivity(userId: string) {
       }
     })
   }
+}
+
+// Helper functions for received file operations
+export async function logShareAcceptance(userId: string, shareId: string, fileName: string, ipAddress?: string, userAgent?: string) {
+  await logAuditEvent({
+    userId,
+    action: AuditAction.SHARE_ACCEPT,
+    resource: 'file_share',
+    resourceId: shareId,
+    details: {
+      fileName,
+      operation: 'accept'
+    },
+    ipAddress,
+    userAgent,
+    severity: AuditSeverity.LOW
+  })
+}
+
+export async function logShareRejection(userId: string, shareId: string, fileName: string, ipAddress?: string, userAgent?: string) {
+  await logAuditEvent({
+    userId,
+    action: AuditAction.SHARE_REJECT,
+    resource: 'file_share',
+    resourceId: shareId,
+    details: {
+      fileName,
+      operation: 'reject'
+    },
+    ipAddress,
+    userAgent,
+    severity: AuditSeverity.LOW
+  })
+}
+
+export async function logShareRevocation(userId: string, shareId: string, fileName: string, reason?: string) {
+  await logAuditEvent({
+    userId,
+    action: AuditAction.SHARE_REVOKE,
+    resource: 'file_share',
+    resourceId: shareId,
+    details: {
+      fileName,
+      operation: 'revoke',
+      reason: reason || 'user_action'
+    },
+    severity: AuditSeverity.MEDIUM
+  })
+}
+
+export async function logBulkShareOperation(userId: string, operation: string, shareIds: string[], successCount: number, failureCount: number) {
+  await logAuditEvent({
+    userId,
+    action: AuditAction.BULK_SHARE_OPERATION,
+    resource: 'file_share',
+    details: {
+      operation,
+      totalShares: shareIds.length,
+      successCount,
+      failureCount,
+      shareIds: shareIds.slice(0, 10) // Log first 10 for reference
+    },
+    severity: failureCount > 0 ? AuditSeverity.MEDIUM : AuditSeverity.LOW
+  })
 }

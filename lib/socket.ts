@@ -64,6 +64,47 @@ export const initSocket = (httpServer: NetServer): ServerIO => {
       socket.broadcast.emit('file-shared', data)
     })
 
+    // Handle advanced sharing events
+    socket.on('file-shared', (data) => {
+      console.log('Advanced file shared event:', data)
+      socket.broadcast.emit('file-shared', data)
+    })
+
+    socket.on('file-accessed', (data) => {
+      console.log('File accessed:', data)
+      socket.broadcast.emit('file-accessed', data)
+    })
+
+    socket.on('file-edited', (data) => {
+      console.log('File edited:', data)
+      socket.broadcast.emit('file-edited', data)
+    })
+
+    socket.on('permission-changed', (data) => {
+      console.log('Permission changed:', data)
+      socket.broadcast.emit('permission-changed', data)
+    })
+
+    socket.on('file-version-created', (data) => {
+      console.log('File version created:', data)
+      socket.broadcast.emit('file-version-created', data)
+    })
+
+    socket.on('file-rolled-back', (data) => {
+      console.log('File rolled back:', data)
+      socket.broadcast.emit('file-rolled-back', data)
+    })
+
+    socket.on('group-created', (data) => {
+      console.log('Group created:', data)
+      socket.broadcast.emit('group-created', data)
+    })
+
+    socket.on('group-member-added', (data) => {
+      console.log('Group member added:', data)
+      socket.broadcast.emit('group-member-added', data)
+    })
+
     // Handle connection requests
     socket.on('request-connection', (data) => {
       console.log('Connection requested:', data)

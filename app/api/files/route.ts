@@ -5,6 +5,8 @@ import { getPrismaClient } from "@/lib/prisma"
 import { put } from '@vercel/blob'
 import { encryptFile } from "@/lib/crypto"
 import { emitSocketEvent } from "@/lib/socket"
+import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
+import { sendFileShareNotification, sendBulkShareNotification } from "@/lib/email"
 
 export async function GET() {
   try {
@@ -62,7 +64,14 @@ export async function POST(request: NextRequest) {
     const encryptionKey = formData.get('encryptionKey') as string
     const type = formData.get('type') as string
 
+    // Enhanced sharing parameters
     let recipients = []
+    let groups = []
+    let permissions = ['VIEW'] // Default permissions
+    let expiresAt: Date | null = null
+    let password: string | null = null
+    let maxAccessCount: number | null = null
+
     try {
       const recipientsStr = formData.get('recipients') as string || '[]'
       recipients = JSON.parse(recipientsStr)
@@ -72,6 +81,70 @@ export async function POST(request: NextRequest) {
         error: "Invalid recipients format",
         details: "Recipients must be a valid JSON array of email addresses."
       }, { status: 400 })
+    }
+
+    try {
+      const groupsStr = formData.get('groups') as string || '[]'
+      groups = JSON.parse(groupsStr)
+    } catch (parseError) {
+      console.error('Failed to parse groups:', parseError)
+      return NextResponse.json({
+        error: "Invalid groups format",
+        details: "Groups must be a valid JSON array of group IDs."
+      }, { status: 400 })
+    }
+
+    try {
+      const permissionsStr = formData.get('permissions') as string || '["VIEW"]'
+      permissions = JSON.parse(permissionsStr)
+      // Validate permissions
+      const validPermissions = ['VIEW', 'DOWNLOAD', 'EDIT']
+      if (!permissions.every(p => validPermissions.includes(p))) {
+        return NextResponse.json({
+          error: "Invalid permissions",
+          details: "Permissions must be one of: VIEW, DOWNLOAD, EDIT"
+        }, { status: 400 })
+      }
+    } catch (parseError) {
+      console.error('Failed to parse permissions:', parseError)
+      return NextResponse.json({
+        error: "Invalid permissions format",
+        details: "Permissions must be a valid JSON array."
+      }, { status: 400 })
+    }
+
+    // Parse expiration date
+    const expiresAtStr = formData.get('expiresAt') as string
+    if (expiresAtStr) {
+      try {
+        expiresAt = new Date(expiresAtStr)
+        if (isNaN(expiresAt.getTime())) {
+          return NextResponse.json({
+            error: "Invalid expiration date",
+            details: "Expiration date must be a valid ISO date string."
+          }, { status: 400 })
+        }
+      } catch (error) {
+        return NextResponse.json({
+          error: "Invalid expiration date format",
+          details: "Expiration date must be a valid ISO date string."
+        }, { status: 400 })
+      }
+    }
+
+    // Parse password protection
+    password = formData.get('password') as string || null
+
+    // Parse max access count
+    const maxAccessCountStr = formData.get('maxAccessCount') as string
+    if (maxAccessCountStr) {
+      maxAccessCount = parseInt(maxAccessCountStr)
+      if (isNaN(maxAccessCount) || maxAccessCount < 1) {
+        return NextResponse.json({
+          error: "Invalid max access count",
+          details: "Max access count must be a positive integer."
+        }, { status: 400 })
+      }
     }
 
     const shareMode = formData.get('shareMode') as string
@@ -104,6 +177,7 @@ export async function POST(request: NextRequest) {
     console.log('File data loaded, size:', fileData.byteLength)
     let finalFileName = file.name
     let finalEncryptionKey = encryptionKey || ""
+    let newFile: any = null
 
     // Encrypt file if requested
     if (encrypt && finalEncryptionKey) {
@@ -131,7 +205,6 @@ export async function POST(request: NextRequest) {
     console.log('Blob upload successful, URL:', blob.url)
 
     console.log('Saving to database...')
-    let newFile
     const maxRetries = 3
     let lastError
 
@@ -175,162 +248,78 @@ export async function POST(request: NextRequest) {
     // Initialize sharing results
     let shareResults: any[] = []
 
-    // Handle sharing if recipients are provided
-    if (shareMode === 'share' && recipients.length > 0) {
-      console.log('=== SHARING LOGIC START ===')
-      console.log('Share mode is "share" and recipients provided:', recipients.length, 'recipients')
+    // Handle sharing if recipients or groups are provided
+    if (shareMode === 'share' && (recipients.length > 0 || groups.length > 0)) {
+      console.log('=== ENHANCED SHARING LOGIC START ===')
+      console.log('Recipients:', recipients.length, 'Groups:', groups.length)
+      console.log('Permissions:', permissions, 'Expires:', expiresAt, 'Password:', !!password)
 
-      // Validate recipients array
-      if (!Array.isArray(recipients)) {
-        console.error('❌ Recipients is not an array:', recipients)
-        return NextResponse.json({
-          error: "Invalid recipients format",
-          details: "Recipients must be an array of email addresses"
-        }, { status: 400 })
-      }
-      const validRecipients = []
-      const invalidRecipients = []
-
-      // Pre-validate all recipients
-      for (const email of recipients) {
-        if (!email || typeof email !== 'string') {
-          console.warn('⚠️ Invalid recipient format:', email)
-          invalidRecipients.push({ email, reason: 'Invalid format' })
-          continue
-        }
-
-        const normalizedEmail = email.trim().toLowerCase()
-
-        // Basic email format validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        if (!emailRegex.test(normalizedEmail)) {
-          console.warn('⚠️ Invalid email format:', email)
-          invalidRecipients.push({ email, reason: 'Invalid email format' })
-          continue
-        }
-
-        validRecipients.push({ original: email, normalized: normalizedEmail })
+      // Validate and process user shares
+      if (recipients.length > 0) {
+        const userShareResults = await processUserShares(
+          prisma,
+          newFile.id,
+          session.user.id,
+          recipients,
+          permissions,
+          expiresAt,
+          password,
+          maxAccessCount
+        )
+        shareResults.push(...userShareResults)
       }
 
-      console.log(`📊 Pre-validation results: ${validRecipients.length} valid, ${invalidRecipients.length} invalid`)
-
-      // Debug: Check all users in database
-      const allUsers = await prisma.user.findMany({
-        select: { id: true, email: true, name: true }
-      })
-      console.log('All users in database:', allUsers.length)
-      allUsers.forEach(user => {
-        console.log(`  User: ${user.email} (ID: ${user.id})`)
-      })
-
-      // Process valid recipients
-      for (const recipient of validRecipients) {
-        console.log('--- Processing recipient:', recipient.original, 'normalized:', recipient.normalized, '---')
-
-        try {
-          // Check if user exists in database
-          console.log('Checking if user exists in database...')
-          const recipientUser = await prisma.user.findUnique({
-            where: { email: recipient.normalized },
-            select: { id: true, email: true, name: true }
-          })
-
-          if (!recipientUser) {
-            console.warn('⚠️ RECIPIENT NOT FOUND:', recipient.normalized)
-            shareResults.push({
-              email: recipient.original,
-              success: false,
-              error: 'User not registered in the system'
-            })
-            continue
-          }
-
-          console.log('✅ User found:', recipientUser.email, '(ID:', recipientUser.id + ')')
-
-          try {
-            // Create share record with sender information
-            const share = await prisma.fileShare.create({
-              data: {
-                fileId: newFile.id,
-                userId: session.user.id, // Sender ID
-                sharedWithEmail: recipient.normalized, // Receiver email
-                permissions: 'view', // Default permission
-                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-              }
-            })
-
-            console.log('✅ Successfully created file share:', {
-              shareId: share.id,
-              fileId: newFile.id,
-              senderId: session.user.id,
-              receiverEmail: recipient.normalized,
-              receiverUserId: recipientUser.id
-            })
-
-            shareResults.push({
-              email: recipient.original,
-              success: true,
-              share,
-              recipientUser
-            })
-
-          } catch (shareError) {
-            console.error('❌ Error creating file share for', recipient.original, ':', shareError)
-            shareResults.push({
-              email: recipient.original,
-              success: false,
-              error: `Database error: ${shareError instanceof Error ? shareError.message : 'Unknown error'}`
-            })
-          }
-        } catch (validationError) {
-          console.error('❌ Error validating recipient', recipient.original, ':', validationError)
-          shareResults.push({
-            email: recipient.original,
-            success: false,
-            error: 'Validation failed'
-          })
-        }
+      // Validate and process group shares
+      if (groups.length > 0) {
+        const groupShareResults = await processGroupShares(
+          prisma,
+          newFile.id,
+          session.user.id,
+          groups,
+          permissions,
+          expiresAt,
+          password,
+          maxAccessCount
+        )
+        shareResults.push(...groupShareResults)
       }
 
-      // Handle invalid recipients
-      invalidRecipients.forEach(invalid => {
-        shareResults.push({
-          email: invalid.email,
-          success: false,
-          error: invalid.reason
-        })
+      // Audit logging for sharing activity
+      await logAuditEvent({
+        userId: session.user.id,
+        action: AuditAction.FILE_SHARE,
+        resource: 'file',
+        resourceId: newFile.id,
+        details: {
+          fileName: newFile.name,
+          recipientsCount: recipients.length,
+          groupsCount: groups.length,
+          permissions,
+          expiresAt: expiresAt?.toISOString(),
+          hasPassword: !!password,
+          maxAccessCount
+        },
+        severity: AuditSeverity.LOW
       })
 
-      // Log share results
-      const successfulShares = shareResults.filter(r => r.success).length
-      const failedShares = shareResults.filter(r => !r.success).length
-      console.log(`=== SHARING RESULTS ===`)
-      console.log(`Total recipients processed: ${recipients.length}`)
-      console.log(`Successful shares: ${successfulShares}`)
-      console.log(`Failed shares: ${failedShares}`)
-
-      if (failedShares > 0) {
-        console.log('Failed share details:')
-        shareResults.filter(r => !r.success).forEach(result => {
-          console.log(`  - ${result.email}: ${result.error}`)
-        })
-      }
-
-      console.log('=== SHARING LOGIC END ===')
-
-      // Emit real-time notifications for successful shares
-      const successfulShareResults = shareResults.filter(r => r.success)
-      for (const result of successfulShareResults) {
+      // Emit enhanced real-time notifications
+      const successfulShares = shareResults.filter(r => r.success)
+      for (const result of successfulShares) {
         emitSocketEvent('file-shared', {
           fileId: newFile.id,
           fileName: newFile.name,
           senderEmail: session.user.email,
           senderId: session.user.id,
-          receiverEmail: result.email,
-          receiverId: result.recipientUser.id,
+          receiverEmail: result.email || result.groupName,
+          receiverId: result.recipientUser?.id || result.groupId,
+          permissions,
+          expiresAt: expiresAt?.toISOString(),
           sharedAt: new Date().toISOString(),
+          shareType: result.shareType
         })
       }
+
+      console.log('=== ENHANCED SHARING LOGIC END ===')
     }
 
     // Prepare response with detailed sharing results
@@ -357,6 +346,72 @@ export async function POST(request: NextRequest) {
     console.log('Response message:', responseMessage)
     console.log('=== UPLOAD REQUEST END ===\n')
 
+    // Send email notifications asynchronously (don't block response)
+    if (shareMode === 'share' && shareResults) {
+      const successfulUserShares = shareResults.filter(r => r.success && r.shareType === 'USER')
+      if (successfulUserShares.length > 0) {
+        setImmediate(async () => {
+          try {
+            // Send individual notifications for single shares
+            if (successfulUserShares.length === 1) {
+              const share = successfulUserShares[0]
+              const shareRecord = share.share
+
+              // Generate download URL with token
+              const downloadToken = `share_${shareRecord.id}_${Date.now()}`
+              const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
+
+              await sendFileShareNotification({
+                recipientEmail: share.email,
+                recipientName: share.recipientUser?.name || undefined,
+                senderEmail: session.user.email!,
+                senderName: session.user.name || undefined,
+                fileName: newFile.originalName || newFile.name,
+                fileSize: newFile.size,
+                fileType: newFile.type,
+                permissions: shareRecord.permissions,
+                expiresAt: shareRecord.expiresAt || undefined,
+                downloadUrl,
+                shareId: shareRecord.id,
+                encrypted: newFile.encrypted,
+              })
+            } else {
+              // Send bulk notification for multiple shares
+              const bulkFiles = successfulUserShares.map(share => {
+                const shareRecord = share.share
+                const downloadToken = `share_${shareRecord.id}_${Date.now()}`
+                const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
+
+                return {
+                  name: newFile.originalName || newFile.name,
+                  size: newFile.size,
+                  type: newFile.type,
+                  permissions: shareRecord.permissions,
+                  expiresAt: shareRecord.expiresAt || undefined,
+                  downloadUrl,
+                  shareId: shareRecord.id,
+                }
+              })
+
+              // Send bulk notifications to each recipient
+              for (const share of successfulUserShares) {
+                await sendBulkShareNotification({
+                  recipientEmail: share.email,
+                  recipientName: share.recipientUser?.name || undefined,
+                  senderEmail: session.user.email!,
+                  senderName: session.user.name || undefined,
+                  files: bulkFiles,
+                  totalFiles: bulkFiles.length,
+                })
+              }
+            }
+          } catch (error) {
+            console.error('Failed to send email notifications:', error)
+          }
+        })
+      }
+    }
+
     return NextResponse.json({
       ...newFile,
       blobUrl: blob.url,
@@ -377,4 +432,168 @@ export async function POST(request: NextRequest) {
       details: error instanceof Error ? error.message : "Unknown error"
     }, { status: 500 })
   }
+}
+
+// Helper function to process user shares
+async function processUserShares(
+  prisma: any,
+  fileId: string,
+  creatorId: string,
+  recipients: string[],
+  permissions: string[],
+  expiresAt: Date | null,
+  password: string | null,
+  maxAccessCount: number | null
+) {
+  const results = []
+
+  for (const email of recipients) {
+    try {
+      const normalizedEmail = email.trim().toLowerCase()
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(normalizedEmail)) {
+        results.push({
+          email,
+          success: false,
+          error: 'Invalid email format',
+          shareType: 'USER'
+        })
+        continue
+      }
+
+      // Check if user exists
+      const recipientUser = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true, email: true, name: true }
+      })
+
+      if (!recipientUser) {
+        results.push({
+          email,
+          success: false,
+          error: 'User not registered in the system',
+          shareType: 'USER'
+        })
+        continue
+      }
+
+      // Create share record
+      const share = await prisma.fileShare.create({
+        data: {
+          fileId,
+          userId: recipientUser.id,
+          sharedWithEmail: normalizedEmail,
+          shareType: 'USER',
+          permissions,
+          password,
+          expiresAt,
+          maxAccessCount,
+          createdBy: creatorId
+        }
+      })
+
+      results.push({
+        email,
+        success: true,
+        share,
+        recipientUser,
+        shareType: 'USER'
+      })
+
+    } catch (error) {
+      console.error('Error processing user share for', email, ':', error)
+      results.push({
+        email,
+        success: false,
+        error: `Database error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        shareType: 'USER'
+      })
+    }
+  }
+
+  return results
+}
+
+// Helper function to process group shares
+async function processGroupShares(
+  prisma: any,
+  fileId: string,
+  creatorId: string,
+  groups: string[],
+  permissions: string[],
+  expiresAt: Date | null,
+  password: string | null,
+  maxAccessCount: number | null
+) {
+  const results = []
+
+  for (const groupId of groups) {
+    try {
+      // Validate group exists and user has access
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        include: {
+          members: { select: { id: true, email: true, name: true } },
+          creator: { select: { id: true } }
+        }
+      })
+
+      if (!group) {
+        results.push({
+          groupId,
+          success: false,
+          error: 'Group not found',
+          shareType: 'GROUP'
+        })
+        continue
+      }
+
+      // Check if user is creator or member of the group
+      if (group.creatorId !== creatorId && !group.members.some((m: any) => m.id === creatorId)) {
+        results.push({
+          groupId,
+          success: false,
+          error: 'Access denied: not a member of this group',
+          shareType: 'GROUP'
+        })
+        continue
+      }
+
+      // Create share record for the group
+      const share = await prisma.fileShare.create({
+        data: {
+          fileId,
+          groupId,
+          shareType: 'GROUP',
+          permissions,
+          password,
+          expiresAt,
+          maxAccessCount,
+          createdBy: creatorId
+        }
+      })
+
+      results.push({
+        groupId,
+        groupName: group.name,
+        success: true,
+        share,
+        memberCount: group.members.length,
+        shareType: 'GROUP'
+      })
+
+    } catch (error) {
+      console.error('Error processing group share for', groupId, ':', error)
+      results.push({
+        groupId,
+        success: false,
+        error: `Database error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        shareType: 'GROUP'
+      })
+    }
+  }
+
+  return results
 }

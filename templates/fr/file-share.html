@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fichier partagé - {{appName}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background-color: white;
+            margin: 20px;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+        }
+        .file-info {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            border-left: 4px solid #007bff;
+        }
+        .file-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+        }
+        .file-details {
+            color: #666;
+            font-size: 14px;
+        }
+        .download-button {
+            display: inline-block;
+            background-color: #007bff;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .download-button:hover {
+            background-color: #0056b3;
+        }
+        .security-notice {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }
+        .unsubscribe {
+            color: #666;
+            font-size: 11px;
+            margin-top: 10px;
+        }
+        .unsubscribe a {
+            color: #007bff;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">{{appName}}</div>
+            <h1>Un fichier a été partagé avec vous</h1>
+        </div>
+
+        <p>Bonjour {{recipientName}},</p>
+
+        <p><strong>{{senderName}}</strong> ({{senderEmail}}) a partagé un fichier avec vous.</p>
+
+        <div class="file-info">
+            <div class="file-name">{{fileName}}</div>
+            <div class="file-details">
+                <strong>Taille :</strong> {{fileSize}}<br>
+                <strong>Type :</strong> {{fileType}}<br>
+                <strong>Permissions :</strong> {{permissions}}<br>
+                <strong>Expire :</strong> {{expiresAt}}<br>
+                {{#encrypted}}
+                <strong>Chiffré :</strong> {{encrypted}}
+                {{/encrypted}}
+            </div>
+        </div>
+
+        <div style="text-align: center;">
+            <a href="{{downloadUrl}}" class="download-button">Télécharger le fichier</a>
+        </div>
+
+        <div class="security-notice">
+            <strong>Note de sécurité :</strong> Ce lien de téléchargement est sécurisé et expirera selon les paramètres de partage. Veuillez télécharger le fichier rapidement si vous en avez besoin.
+        </div>
+
+        <p>Si vous avez des questions concernant ce partage de fichier, veuillez contacter l'expéditeur directement.</p>
+
+        <p>Cordialement,<br>L'équipe {{appName}}</p>
+
+        <div class="footer">
+            <p>Cet email vous a été envoyé car un fichier a été partagé avec votre compte sur {{appName}}.</p>
+            <div class="unsubscribe">
+                <a href="{{appUrl}}/settings/notifications">Gérer vos préférences email</a> |
+                <a href="{{appUrl}}/unsubscribe?email={{recipientEmail}}">Se désabonner de toutes les notifications</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

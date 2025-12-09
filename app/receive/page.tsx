@@ -4,6 +4,12 @@ import { useState, useEffect, useCallback, useMemo } from "react"
 import { useSession } from "next-auth/react"
 import { usePresence } from "@/lib/presence-context"
 import { useNotifications } from "@/lib/notification-context"
+import { useDownloadManager } from "@/components/DownloadManager"
+import DownloadQueue from "@/components/DownloadQueue"
+import SwipeableFileCard from "@/components/SwipeableFileCard"
+import { ToastProvider, useToast } from "@/components/Toast"
+import ConnectionStatus from "@/components/ConnectionStatus"
+import LazyImage from "@/components/LazyImage"
 
 interface ReceivedFile {
   id: string // This is the share ID
@@ -25,7 +31,9 @@ interface ReceivedFile {
 export default function Receive() {
     const { data: session } = useSession()
     const { isConnected, userPresence, socket } = usePresence()
-   const { incrementNewFiles, clearNewFiles } = useNotifications()
+    const { incrementNewFiles, clearNewFiles } = useNotifications()
+    const { addToQueue } = useDownloadManager()
+    const { addToast } = useToast()
    const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
    const [loading, setLoading] = useState(true)
    const [error, setError] = useState<string | null>(null)
@@ -41,12 +49,30 @@ export default function Receive() {
    const [filterType, setFilterType] = useState<string>("all")
    const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-   const [newFileNotifications, setNewFileNotifications] = useState<ReceivedFile[]>([])
-   const [showNotification, setShowNotification] = useState(false)
+
+   // Enhanced filtering states
+   const [dateFrom, setDateFrom] = useState("")
+   const [dateTo, setDateTo] = useState("")
+   const [filterPermissions, setFilterPermissions] = useState<string[]>([])
+   const [senderFilter, setSenderFilter] = useState("")
+   const [sizeMin, setSizeMin] = useState("")
+   const [sizeMax, setSizeMax] = useState("")
+   const [availableSenders, setAvailableSenders] = useState<string[]>([])
    const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
    const [previewFile, setPreviewFile] = useState<ReceivedFile | null>(null)
    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
    const [previewLoading, setPreviewLoading] = useState(false)
+
+   // Accept/Reject states
+   const [acceptRejectFile, setAcceptRejectFile] = useState<ReceivedFile | null>(null)
+   const [acceptRejectAction, setAcceptRejectAction] = useState<'accept' | 'reject' | null>(null)
+   const [showAcceptRejectConfirm, setShowAcceptRejectConfirm] = useState(false)
+
+   // Bulk operations states
+   const [bulkOperation, setBulkOperation] = useState<'accept' | 'reject' | 'delete' | 'export' | null>(null)
+   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null)
+   const [bulkResults, setBulkResults] = useState<any[] | null>(null)
  
    // Performance optimizations
    const [currentPage, setCurrentPage] = useState(1)
@@ -86,33 +112,40 @@ export default function Receive() {
 
       if (showNotifications && receivedFiles.length > 0) {
         // Check for new files since last update
-        const previousFileIds = new Set(receivedFiles.map(f => f.id))
-        const newFiles = files.filter((file: ReceivedFile) => !previousFileIds.has(file.id))
+         const previousFileIds = new Set(receivedFiles.map(f => f.id))
+         const newFiles: ReceivedFile[] = files.filter((file: ReceivedFile) => !previousFileIds.has(file.id))
 
         if (newFiles.length > 0) {
-          setNewFileNotifications(newFiles)
-          setShowNotification(true)
-          incrementNewFiles(newFiles.length)
+           incrementNewFiles(newFiles.length)
 
-          // Auto-hide notification after 5 seconds
-          setTimeout(() => {
-            setShowNotification(false)
-            setNewFileNotifications([])
-          }, 5000)
+           // Show toast notification for new files
+           addToast({
+             type: 'info',
+             title: `${newFiles.length} new file${newFiles.length > 1 ? 's' : ''} received!`,
+             message: `From ${newFiles.map(f => f.senderName || f.senderEmail.split('@')[0]).join(', ')}`,
+             duration: 5000,
+             action: {
+               label: 'View Files',
+               onClick: () => {
+                 // Scroll to top to show new files
+                 window.scrollTo({ top: 0, behavior: 'smooth' })
+               }
+             }
+           })
 
-          // Optional: Play notification sound
-          if (typeof window !== 'undefined' && 'Audio' in window) {
-            try {
-              const audio = new Audio('/notification.mp3')
-              audio.volume = 0.3
-              audio.play().catch(() => {
-                // Silently fail if audio can't play
-              })
-            } catch {
-              // Silently fail if audio not supported
-            }
-          }
-        }
+           // Optional: Play notification sound
+           if (typeof window !== 'undefined' && 'Audio' in window) {
+             try {
+               const audio = new Audio('/notification.mp3')
+               audio.volume = 0.3
+               audio.play().catch(() => {
+                 // Silently fail if audio can't play
+               })
+             } catch {
+               // Silently fail if audio not supported
+             }
+           }
+         }
       }
 
       if (append) {
@@ -121,6 +154,10 @@ export default function Receive() {
         setReceivedFiles(files)
         setTotalFiles(total)
         setCurrentPage(page)
+
+        // Collect unique senders for autocomplete
+        const senders = [...new Set(files.map((f: ReceivedFile) => f.senderEmail).filter(Boolean))]
+        setAvailableSenders(senders as string[])
       }
 
       setLastUpdate(new Date())
@@ -148,38 +185,30 @@ export default function Receive() {
     if (!socket || !session) return
 
     const handleFileShared = (data: any) => {
-      console.log('Real-time file shared notification:', data)
-      // Check if this file is shared with the current user
-      if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
-        console.log('File shared with current user, refreshing...')
-        // Show notification
-        setNewFileNotifications([{
-          id: `temp-${Date.now()}`,
-          fileId: data.fileId,
-          name: data.fileName,
-          originalName: data.fileName,
-          size: 0, // Will be updated when fetched
-          type: 'unknown',
-          url: '',
-          encrypted: false,
-          fileType: 'unknown',
-          senderEmail: data.senderEmail,
-          senderName: data.senderName,
-          sharedAt: data.sharedAt,
-          permissions: 'view'
-        }])
-        setShowNotification(true)
+       console.log('Real-time file shared notification:', data)
+       // Check if this file is shared with the current user
+       if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
+         console.log('File shared with current user, refreshing...')
 
-        // Auto-hide notification after 5 seconds
-        setTimeout(() => {
-          setShowNotification(false)
-          setNewFileNotifications([])
-        }, 5000)
+         // Show toast notification
+         addToast({
+           type: 'success',
+           title: 'New file received!',
+           message: `${data.fileName} from ${data.senderName || data.senderEmail.split('@')[0]}`,
+           duration: 4000,
+           action: {
+             label: 'View',
+             onClick: () => {
+               // Scroll to top to show new files
+               window.scrollTo({ top: 0, behavior: 'smooth' })
+             }
+           }
+         })
 
-        // Refresh the file list
-        fetchReceivedFiles(true) // Refresh with notifications
-      }
-    }
+         // Refresh the file list
+         fetchReceivedFiles(true) // Refresh with notifications
+       }
+     }
 
     socket.on('file-shared', handleFileShared)
 
@@ -304,7 +333,25 @@ export default function Receive() {
       return
     }
 
-    await downloadFileWithRetry(file, "", 3) // Retry up to 3 times
+    // Add to download queue instead of downloading immediately
+    addToQueue({
+      id: `download-${file.id}-${Date.now()}`,
+      fileId: file.fileId,
+      name: file.name,
+      originalName: file.originalName,
+      size: file.size,
+      type: file.type,
+      url: file.url,
+      encrypted: file.encrypted,
+      senderEmail: file.senderEmail,
+      senderName: file.senderName,
+      sharedAt: file.sharedAt,
+      permissions: file.permissions,
+      expiresAt: file.expiresAt,
+      priority: 'normal',
+      totalBytes: file.size,
+      maxRetries: 3
+    })
   }
 
   const downloadFileWithRetry = async (file: ReceivedFile, key: string, maxRetries: number) => {
@@ -320,7 +367,12 @@ export default function Receive() {
           // Last attempt failed, show final error
           const errorMessage = error instanceof Error ? error.message : 'Download failed after multiple attempts'
           setDecryptionError(errorMessage)
-          alert(`Download failed after ${maxRetries} attempts: ${errorMessage}`)
+          addToast({
+            type: 'error',
+            title: 'Download Failed',
+            message: `Failed after ${maxRetries} attempts: ${errorMessage}`,
+            duration: 7000
+          })
           break
         }
 
@@ -441,9 +493,21 @@ export default function Receive() {
       const errorMessage = error instanceof Error ? error.message : 'Download failed'
       setDecryptionError(errorMessage)
 
-      // Show user-friendly alert for critical errors
+      // Show user-friendly toast for critical errors
       if (errorMessage.includes('timed out') || errorMessage.includes('Failed to fetch')) {
-        alert(`Download failed: ${errorMessage}. Please check your internet connection and try again.`)
+        addToast({
+          type: 'error',
+          title: 'Download Failed',
+          message: `${errorMessage}. Please check your internet connection and try again.`,
+          duration: 6000
+        })
+      } else {
+        addToast({
+          type: 'error',
+          title: 'Download Error',
+          message: errorMessage,
+          duration: 5000
+        })
       }
     } finally {
       setActionLoading(null)
@@ -495,8 +559,26 @@ export default function Receive() {
         }
       }
     } else {
-      // Handle downloading decrypted file
-      await downloadFileWithRetry(decryptingFile, decryptionKey.trim(), 3)
+      // Handle downloading decrypted file - add to queue with decryption key
+      addToQueue({
+        id: `download-${decryptingFile.id}-${Date.now()}`,
+        fileId: decryptingFile.fileId,
+        name: decryptingFile.name,
+        originalName: decryptingFile.originalName,
+        size: decryptingFile.size,
+        type: decryptingFile.type,
+        url: decryptingFile.url,
+        encrypted: decryptingFile.encrypted,
+        senderEmail: decryptingFile.senderEmail,
+        senderName: decryptingFile.senderName,
+        sharedAt: decryptingFile.sharedAt,
+        permissions: decryptingFile.permissions,
+        expiresAt: decryptingFile.expiresAt,
+        priority: 'normal',
+        totalBytes: decryptingFile.size,
+        maxRetries: 3,
+        decryptionKey: decryptionKey.trim()
+      })
     }
   }
 
@@ -612,7 +694,64 @@ export default function Receive() {
       setReceivedFiles(prev => prev.filter(f => f.id !== file.id))
     } catch (error) {
       console.error('Delete error:', error)
-      alert(`Failed to delete file: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      addToast({
+        type: 'error',
+        title: 'Delete Failed',
+        message: `Failed to delete "${file.name}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+        duration: 5000
+      })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleAcceptReject = (file: ReceivedFile, action: 'accept' | 'reject') => {
+    setAcceptRejectFile(file)
+    setAcceptRejectAction(action)
+    setShowAcceptRejectConfirm(true)
+  }
+
+  const confirmAcceptReject = async () => {
+    if (!acceptRejectFile || !acceptRejectAction) return
+
+    try {
+      setActionLoading(acceptRejectFile.id)
+      const response = await fetch(`/api/files/received/${acceptRejectFile.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: acceptRejectAction })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to ${acceptRejectAction} file`)
+      }
+
+      const result = await response.json()
+
+      // Update local state based on action
+      if (acceptRejectAction === 'reject') {
+        // Remove rejected files from the list
+        setReceivedFiles(prev => prev.filter(f => f.id !== acceptRejectFile.id))
+      }
+      // For accept, we could add some visual indication, but for now just keep it
+
+      // Close modal
+      setShowAcceptRejectConfirm(false)
+      setAcceptRejectFile(null)
+      setAcceptRejectAction(null)
+
+      // Show success toast
+      addToast({
+        type: acceptRejectAction === 'accept' ? 'success' : 'warning',
+        title: `File ${acceptRejectAction === 'accept' ? 'Accepted' : 'Rejected'}`,
+        message: `"${acceptRejectFile.name}" has been ${acceptRejectAction === 'accept' ? 'accepted' : 'rejected'} successfully`,
+        duration: 3000
+      })
+
+    } catch (error) {
+      console.error('Accept/Reject error:', error)
+      alert(`Failed to ${acceptRejectAction} file: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setActionLoading(null)
     }
@@ -628,13 +767,32 @@ export default function Receive() {
     return receivedFiles
       .filter(file => {
         const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                             file.senderEmail.toLowerCase().includes(searchQuery.toLowerCase())
+                              file.senderEmail.toLowerCase().includes(searchQuery.toLowerCase())
         const matchesType = filterType === "all" ||
-                            (filterType === "encrypted" && file.encrypted) ||
-                            (filterType === "documents" && file.type.includes("document")) ||
-                            (filterType === "images" && file.type.includes("image")) ||
-                            (filterType === "videos" && file.type.includes("video"))
-        return matchesSearch && matchesType
+                             (filterType === "encrypted" && file.encrypted) ||
+                             (filterType === "documents" && file.type.includes("document")) ||
+                             (filterType === "images" && file.type.includes("image")) ||
+                             (filterType === "videos" && file.type.includes("video"))
+
+        // Date range filtering
+        const fileDate = new Date(file.sharedAt)
+        const fromDate = dateFrom ? new Date(dateFrom) : null
+        const toDate = dateTo ? new Date(dateTo) : null
+        const matchesDateRange = (!fromDate || fileDate >= fromDate) && (!toDate || fileDate <= toDate)
+
+        // Permissions filtering
+        const matchesPermissions = filterPermissions.length === 0 ||
+                                   filterPermissions.some(perm => file.permissions.includes(perm))
+
+        // Sender filtering
+        const matchesSender = !senderFilter || file.senderEmail.toLowerCase().includes(senderFilter.toLowerCase())
+
+        // Size range filtering
+        const minSize = sizeMin ? parseInt(sizeMin) * 1024 * 1024 : null // Convert MB to bytes
+        const maxSize = sizeMax ? parseInt(sizeMax) * 1024 * 1024 : null
+        const matchesSizeRange = (!minSize || file.size >= minSize) && (!maxSize || file.size <= maxSize)
+
+        return matchesSearch && matchesType && matchesDateRange && matchesPermissions && matchesSender && matchesSizeRange
       })
       .sort((a, b) => {
         let comparison = 0
@@ -652,7 +810,7 @@ export default function Receive() {
         }
         return sortOrder === "asc" ? comparison : -comparison
       })
-  }, [receivedFiles, searchQuery, filterType, sortBy, sortOrder])
+  }, [receivedFiles, searchQuery, filterType, sortBy, sortOrder, dateFrom, dateTo, filterPermissions, senderFilter, sizeMin, sizeMax])
 
   // Bulk actions
   const handleSelectFile = (fileId: string) => {
@@ -674,10 +832,28 @@ export default function Receive() {
   }
 
   const handleBulkDownload = async () => {
+    // Add all selected files to download queue
     for (const fileId of selectedFiles) {
       const file = receivedFiles.find(f => f.id === fileId)
-      if (file) {
-        await handleDownload(file)
+      if (file && !file.encrypted) { // Only add non-encrypted files to bulk download
+        addToQueue({
+          id: `download-${file.id}-${Date.now()}`,
+          fileId: file.fileId,
+          name: file.name,
+          originalName: file.originalName,
+          size: file.size,
+          type: file.type,
+          url: file.url,
+          encrypted: file.encrypted,
+          senderEmail: file.senderEmail,
+          senderName: file.senderName,
+          sharedAt: file.sharedAt,
+          permissions: file.permissions,
+          expiresAt: file.expiresAt,
+          priority: 'low', // Bulk downloads have lower priority
+          totalBytes: file.size,
+          maxRetries: 3
+        })
       }
     }
     setSelectedFiles(new Set())
@@ -701,9 +877,132 @@ export default function Receive() {
       setSelectedFiles(new Set())
     } catch (error) {
       console.error('Bulk delete error:', error)
-      alert('Some files could not be deleted. Please try again.')
+      addToast({
+        type: 'error',
+        title: 'Bulk Delete Failed',
+        message: 'Some files could not be deleted. Please try again.',
+        duration: 5000
+      })
     } finally {
       setActionLoading(null)
+    }
+  }
+
+  const handleBulkAcceptReject = (operation: 'accept' | 'reject') => {
+    setBulkOperation(operation)
+    setShowBulkConfirm(true)
+  }
+
+  const handleBulkExport = (format: 'csv' | 'json' = 'json') => {
+    setBulkOperation('export')
+    performBulkExport(format)
+  }
+
+  const performBulkExport = async (format: 'csv' | 'json' = 'json') => {
+    try {
+      setActionLoading("bulk-export")
+      const shareIds = Array.from(selectedFiles)
+
+      const response = await fetch('/api/files/received/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'export',
+          shareIds,
+          format
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Export failed')
+      }
+
+      // Create download
+      const blob = await response.blob()
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = downloadUrl
+      a.download = `received-files-export.${format === 'csv' ? 'csv' : 'json'}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(downloadUrl)
+
+      setSelectedFiles(new Set())
+      addToast({
+        type: 'success',
+        title: 'Export Completed',
+        message: `Successfully exported ${shareIds.length} files`,
+        duration: 4000
+      })
+    } catch (error) {
+      console.error('Bulk export error:', error)
+      addToast({
+        type: 'error',
+        title: 'Export Failed',
+        message: 'Please try again.',
+        duration: 5000
+      })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const confirmBulkAcceptReject = async () => {
+    if (!bulkOperation || selectedFiles.size === 0) return
+
+    const shareIds = Array.from(selectedFiles)
+    setBulkProgress({ completed: 0, total: shareIds.length })
+    setShowBulkConfirm(false)
+
+    try {
+      const response = await fetch('/api/files/received/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: bulkOperation,
+          shareIds
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Bulk operation failed')
+      }
+
+      const result = await response.json()
+      setBulkResults(result.results)
+
+      // Update local state based on operation
+      if (bulkOperation === 'reject' || bulkOperation === 'delete') {
+        const successfulIds = result.results
+          .filter((r: any) => r.success)
+          .map((r: any) => r.shareId)
+        setReceivedFiles(prev => prev.filter(f => !successfulIds.includes(f.id)))
+      }
+
+      setSelectedFiles(new Set())
+
+      // Show results summary
+      const successCount = result.summary.totalSuccess
+      const failCount = result.summary.totalFailed
+      addToast({
+        type: failCount > 0 ? 'warning' : 'success',
+        title: `Bulk ${bulkOperation.charAt(0).toUpperCase() + bulkOperation.slice(1)} Completed`,
+        message: `${successCount} successful${failCount > 0 ? `, ${failCount} failed` : ''}`,
+        duration: 5000
+      })
+
+    } catch (error) {
+      console.error('Bulk operation error:', error)
+      addToast({
+        type: 'error',
+        title: `Bulk ${bulkOperation.charAt(0).toUpperCase() + bulkOperation.slice(1)} Failed`,
+        message: 'Please try again.',
+        duration: 5000
+      })
+    } finally {
+      setBulkProgress(null)
+      setBulkOperation(null)
     }
   }
 
@@ -744,36 +1043,6 @@ export default function Receive() {
     <div className="min-h-screen bg-background text-foreground">
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto">
-          {/* Real-time Notification Banner */}
-          {showNotification && newFileNotifications.length > 0 && (
-            <div className="mb-6 bg-gradient-to-r from-green-500 to-blue-500 text-white p-4 rounded-xl shadow-lg animate-pulse">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="text-2xl">📨</div>
-                  <div>
-                    <h3 className="font-semibold text-lg">
-                      {newFileNotifications.length} new file{newFileNotifications.length > 1 ? 's' : ''} received!
-                    </h3>
-                    <p className="text-sm opacity-90">
-                      From {newFileNotifications.map(f => f.senderName || f.senderEmail.split('@')[0]).join(', ')}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowNotification(false)
-                    setNewFileNotifications([])
-                  }}
-                  className="bg-white/20 hover:bg-white/30 rounded-full p-2 transition-colors touch-manipulation"
-                  aria-label="Dismiss notification"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Load More Button for Pagination */}
           {receivedFiles.length > 0 && receivedFiles.length < totalFiles && (
@@ -796,16 +1065,11 @@ export default function Receive() {
           )}
 
           <div className="flex flex-col gap-6 mb-8">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <div className="flex items-center gap-4">
-                <h1 className="text-2xl md:text-3xl font-bold">Received Files</h1>
-                {isConnected && (
-                  <div className="flex items-center gap-2 text-sm text-green-600">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    Live Updates
-                  </div>
-                )}
-              </div>
+           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+             <div className="flex items-center gap-4">
+               <h1 className="text-2xl md:text-3xl font-bold">Received Files</h1>
+               <ConnectionStatus />
+             </div>
               <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-500">
                   {filteredAndSortedFiles.length} of {receivedFiles.length} files
@@ -827,44 +1091,132 @@ export default function Receive() {
             </div>
 
             {/* Search and Filter Controls */}
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  placeholder="Search files by name or sender..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
-                />
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    placeholder="Search files by name or sender..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  >
+                    <option value="all">All Files</option>
+                    <option value="encrypted">Encrypted</option>
+                    <option value="documents">Documents</option>
+                    <option value="images">Images</option>
+                    <option value="videos">Videos</option>
+                  </select>
+                  <select
+                    value={`${sortBy}-${sortOrder}`}
+                    onChange={(e) => {
+                      const [sort, order] = e.target.value.split('-')
+                      setSortBy(sort as "date" | "name" | "size")
+                      setSortOrder(order as "asc" | "desc")
+                    }}
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  >
+                    <option value="date-desc">Newest First</option>
+                    <option value="date-asc">Oldest First</option>
+                    <option value="name-asc">Name A-Z</option>
+                    <option value="name-desc">Name Z-A</option>
+                    <option value="size-desc">Largest First</option>
+                    <option value="size-asc">Smallest First</option>
+                  </select>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <select
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
-                >
-                  <option value="all">All Files</option>
-                  <option value="encrypted">Encrypted</option>
-                  <option value="documents">Documents</option>
-                  <option value="images">Images</option>
-                  <option value="videos">Videos</option>
-                </select>
-                <select
-                  value={`${sortBy}-${sortOrder}`}
-                  onChange={(e) => {
-                    const [sort, order] = e.target.value.split('-')
-                    setSortBy(sort as "date" | "name" | "size")
-                    setSortOrder(order as "asc" | "desc")
-                  }}
-                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
-                >
-                  <option value="date-desc">Newest First</option>
-                  <option value="date-asc">Oldest First</option>
-                  <option value="name-asc">Name A-Z</option>
-                  <option value="name-desc">Name Z-A</option>
-                  <option value="size-desc">Largest First</option>
-                  <option value="size-asc">Smallest First</option>
-                </select>
+
+              {/* Advanced Filters */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Date From</label>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Date To</label>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Sender</label>
+                  <select
+                    value={senderFilter}
+                    onChange={(e) => setSenderFilter(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  >
+                    <option value="">All Senders</option>
+                    {availableSenders.map(sender => (
+                      <option key={sender} value={sender}>{sender}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Permissions</label>
+                  <select
+                    multiple
+                    value={filterPermissions}
+                    onChange={(e) => {
+                      const values = Array.from(e.target.selectedOptions, option => option.value)
+                      setFilterPermissions(values)
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  >
+                    <option value="VIEW">View</option>
+                    <option value="DOWNLOAD">Download</option>
+                    <option value="EDIT">Edit</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Min Size (MB)</label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    value={sizeMin}
+                    onChange={(e) => setSizeMin(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Max Size (MB)</label>
+                  <input
+                    type="number"
+                    placeholder="No limit"
+                    value={sizeMax}
+                    onChange={(e) => setSizeMax(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={() => {
+                      setDateFrom("")
+                      setDateTo("")
+                      setSenderFilter("")
+                      setFilterPermissions([])
+                      setSizeMin("")
+                      setSizeMax("")
+                    }}
+                    className="w-full px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
+                  >
+                    Clear Filters
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -883,13 +1235,41 @@ export default function Receive() {
                       Clear selection
                     </button>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => handleBulkAcceptReject('accept')}
+                      disabled={actionLoading !== null}
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-green-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
+                    >
+                      Accept Selected
+                    </button>
+                    <button
+                      onClick={() => handleBulkAcceptReject('reject')}
+                      disabled={actionLoading !== null}
+                      className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
+                    >
+                      Reject Selected
+                    </button>
                     <button
                       onClick={handleBulkDownload}
                       disabled={actionLoading === "bulk-download"}
                       className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
                     >
                       {actionLoading === "bulk-download" ? "Downloading..." : "Download Selected"}
+                    </button>
+                    <button
+                      onClick={() => handleBulkExport('json')}
+                      disabled={actionLoading === "bulk-export"}
+                      className="bg-purple-500 hover:bg-purple-600 disabled:bg-purple-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
+                    >
+                      {actionLoading === "bulk-export" ? "Exporting..." : "Export JSON"}
+                    </button>
+                    <button
+                      onClick={() => handleBulkExport('csv')}
+                      disabled={actionLoading === "bulk-export"}
+                      className="bg-purple-500 hover:bg-purple-600 disabled:bg-purple-400 text-white px-4 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
+                    >
+                      {actionLoading === "bulk-export" ? "Exporting..." : "Export CSV"}
                     </button>
                     <button
                       onClick={handleBulkDelete}
@@ -937,95 +1317,29 @@ export default function Receive() {
 
               <div className="grid gap-4">
                 {filteredAndSortedFiles.map((file) => (
-                  <div key={file.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 md:p-6 hover:shadow-xl transition-shadow">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div className="flex items-center gap-3 md:gap-4">
-                        {/* File Selection Checkbox */}
-                        <input
-                          type="checkbox"
-                          checked={selectedFiles.has(file.id)}
-                          onChange={() => handleSelectFile(file.id)}
-                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                        />
-                        <div className="text-2xl md:text-3xl">{getFileIcon(file.type)}</div>
-                        <div className="min-w-0 flex-1">
-                          <h3 className="text-base md:text-lg font-semibold truncate">{file.name}</h3>
-                          <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400">
-                            From {file.senderEmail} • {formatFileSize(file.size)} • {formatDate(file.sharedAt)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                        {file.encrypted && (
-                          <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs font-medium self-start sm:self-center">
-                            🔒 Encrypted
-                          </span>
-                        )}
-
-                        <div className="flex gap-2 w-full sm:w-auto">
-                          {file.type.startsWith('image/') && (
-                            <button
-                              onClick={() => handlePreview(file)}
-                              disabled={actionLoading === file.id}
-                              className="flex-1 sm:flex-none bg-purple-500 hover:bg-purple-600 disabled:bg-purple-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
-                            >
-                              {actionLoading === file.id ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
-                                  <span>Loading...</span>
-                                </div>
-                              ) : (
-                                "👁️ Preview"
-                              )}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDownload(file)}
-                            disabled={actionLoading === file.id}
-                            className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
-                          >
-                            {actionLoading === file.id ? (
-                              <div className="flex items-center gap-2">
-                                <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
-                                <span>Downloading...</span>
-                              </div>
-                            ) : (
-                              "⬇️ Download"
-                            )}
-                          </button>
-                          <button
-                            onClick={() => handleView(file)}
-                            disabled={actionLoading === file.id}
-                            className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
-                          >
-                            {actionLoading === file.id ? (
-                              <div className="flex items-center gap-2">
-                                <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
-                                <span>Loading...</span>
-                              </div>
-                            ) : (
-                              "🔗 Open"
-                            )}
-                          </button>
-                          <button
-                            onClick={() => handleDelete(file)}
-                            disabled={actionLoading === file.id}
-                            className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white px-3 md:px-4 py-2 rounded-lg transition-all duration-200 text-sm disabled:cursor-not-allowed touch-manipulation active:scale-95"
-                          >
-                            {actionLoading === file.id ? (
-                              <div className="flex items-center gap-2">
-                                <div className="animate-spin rounded-full h-3 w-3 border-b border-white"></div>
-                                <span>Deleting...</span>
-                              </div>
-                            ) : (
-                              "🗑️ Delete"
-                            )}
-                          </button>
-                        </div>
+                  <SwipeableFileCard
+                    key={file.id}
+                    file={file}
+                    isSelected={selectedFiles.has(file.id)}
+                    onSelect={handleSelectFile}
+                    onAccept={(file) => handleAcceptReject(file, 'accept')}
+                    onReject={(file) => handleAcceptReject(file, 'reject')}
+                    onDownload={handleDownload}
+                    onPreview={handlePreview}
+                    onDelete={handleDelete}
+                    actionLoading={actionLoading}
+                  >
+                    {/* File content */}
+                    <div className="flex items-center gap-3 md:gap-4">
+                      <div className="text-2xl md:text-3xl">{getFileIcon(file.type)}</div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-base md:text-lg font-semibold truncate">{file.name}</h3>
+                        <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400">
+                          From {file.senderEmail} • {formatFileSize(file.size)} • {formatDate(file.sharedAt)}
+                        </p>
                       </div>
                     </div>
-                  </div>
+                  </SwipeableFileCard>
                 ))}
               </div>
             </div>
@@ -1102,7 +1416,7 @@ export default function Receive() {
               ) : previewUrl ? (
                 <div className="flex justify-center">
                   {previewFile.type.startsWith('image/') ? (
-                    <img
+                    <LazyImage
                       src={previewUrl}
                       alt={previewFile.name}
                       className="max-w-full max-h-[60vh] object-contain rounded-lg"
@@ -1201,6 +1515,141 @@ export default function Receive() {
           </div>
         </div>
       )}
+
+      {/* Accept/Reject Confirmation Modal */}
+      {showAcceptRejectConfirm && acceptRejectFile && acceptRejectAction && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-4 md:p-6">
+            <h3 className="text-lg md:text-xl font-semibold mb-4">
+              {acceptRejectAction === 'accept' ? 'Accept' : 'Reject'} File Share
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Are you sure you want to <strong>{acceptRejectAction}</strong> the file share for{' '}
+              <strong className="break-words">"{acceptRejectFile.name}"</strong>?
+            </p>
+            {acceptRejectAction === 'reject' && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
+                <p className="text-sm text-red-800 dark:text-red-200">
+                  <strong>Warning:</strong> Rejecting will revoke access to this file. This action cannot be undone.
+                </p>
+              </div>
+            )}
+            {acceptRejectAction === 'accept' && (
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 mb-4">
+                <p className="text-sm text-green-800 dark:text-green-200">
+                  Accepting acknowledges receipt of this file share. The share will remain active.
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={confirmAcceptReject}
+                disabled={actionLoading !== null}
+                className={`flex-1 py-3 rounded-lg transition-colors disabled:cursor-not-allowed text-base font-medium touch-manipulation ${
+                  acceptRejectAction === 'accept'
+                    ? 'bg-green-500 hover:bg-green-600 disabled:bg-green-400 text-white'
+                    : 'bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white'
+                }`}
+              >
+                {actionLoading !== null ? "Processing..." : `Yes, ${acceptRejectAction}`}
+              </button>
+              <button
+                onClick={() => {
+                  setShowAcceptRejectConfirm(false)
+                  setAcceptRejectFile(null)
+                  setAcceptRejectAction(null)
+                }}
+                disabled={actionLoading !== null}
+                className="flex-1 sm:flex-none px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:cursor-not-allowed text-base font-medium touch-manipulation"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Operation Confirmation Modal */}
+      {showBulkConfirm && bulkOperation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-4 md:p-6">
+            <h3 className="text-lg md:text-xl font-semibold mb-4">
+              Bulk {bulkOperation.charAt(0).toUpperCase() + bulkOperation.slice(1)}
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Are you sure you want to <strong>{bulkOperation}</strong> {selectedFiles.size} selected file{selectedFiles.size !== 1 ? 's' : ''}?
+            </p>
+            {(bulkOperation === 'reject' || bulkOperation === 'delete') && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
+                <p className="text-sm text-red-800 dark:text-red-200">
+                  <strong>Warning:</strong> This action cannot be undone.
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={confirmBulkAcceptReject}
+                disabled={actionLoading !== null}
+                className={`flex-1 py-3 rounded-lg transition-colors disabled:cursor-not-allowed text-base font-medium touch-manipulation ${
+                  bulkOperation === 'accept'
+                    ? 'bg-green-500 hover:bg-green-600 disabled:bg-green-400'
+                    : bulkOperation === 'reject'
+                    ? 'bg-red-500 hover:bg-red-600 disabled:bg-red-400'
+                    : 'bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400'
+                } text-white`}
+              >
+                {actionLoading !== null ? "Processing..." : `Yes, ${bulkOperation}`}
+              </button>
+              <button
+                onClick={() => {
+                  setShowBulkConfirm(false)
+                  setBulkOperation(null)
+                }}
+                disabled={actionLoading !== null}
+                className="flex-1 sm:flex-none px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:cursor-not-allowed text-base font-medium touch-manipulation"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Progress Modal */}
+      {bulkProgress && bulkOperation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-4 md:p-6">
+            <h3 className="text-lg md:text-xl font-semibold mb-4">
+              Processing Bulk {bulkOperation.charAt(0).toUpperCase() + bulkOperation.slice(1)}
+            </h3>
+            <div className="mb-4">
+              <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-2">
+                <span>Progress</span>
+                <span>{bulkProgress.completed} / {bulkProgress.total}</span>
+              </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${(bulkProgress.completed / bulkProgress.total) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+            {bulkProgress.currentFile && (
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Processing: <strong className="break-words">{bulkProgress.currentFile}</strong>
+              </p>
+            )}
+            <div className="flex justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Download Queue */}
+      <DownloadQueue />
     </div>
   )
 }

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Share Expiring - {{appName}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background-color: white;
+            margin: 20px;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #ffc107;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .warning-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        .file-info {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            border-left: 4px solid #ffc107;
+        }
+        .file-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #856404;
+            margin-bottom: 10px;
+        }
+        .expiration-info {
+            font-size: 16px;
+            font-weight: bold;
+            color: #dc3545;
+            margin: 15px 0;
+        }
+        .download-button {
+            display: inline-block;
+            background-color: #ffc107;
+            color: #212529;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .download-button:hover {
+            background-color: #e0a800;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }
+        .unsubscribe {
+            color: #666;
+            font-size: 11px;
+            margin-top: 10px;
+        }
+        .unsubscribe a {
+            color: #007bff;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">{{appName}}</div>
+            <h1>File Share Expiration Warning</h1>
+        </div>
+
+        <div class="warning">
+            <div class="warning-icon">⚠️</div>
+            <strong>Action Required:</strong> A shared file is about to expire
+        </div>
+
+        <p>Hello {{recipientName}},</p>
+
+        <p>This is a reminder that a file shared with you will expire soon.</p>
+
+        <div class="file-info">
+            <div class="file-name">{{fileName}}</div>
+            <div class="expiration-info">
+                Expires: {{expiresAt}}
+            </div>
+            <p>Please download the file before it expires, or contact the sender if you need more time.</p>
+        </div>
+
+        <div style="text-align: center;">
+            <a href="{{downloadUrl}}" class="download-button">Download File Now</a>
+        </div>
+
+        <p><strong>Important:</strong> Once the file share expires, you will no longer be able to access or download the file. Make sure to save it locally if you need it for future reference.</p>
+
+        <p>If you need the sender to extend the sharing period, please contact them directly.</p>
+
+        <p>Best regards,<br>The {{appName}} Team</p>
+
+        <div class="footer">
+            <p>This email was sent to you as a courtesy reminder about expiring file shares on {{appName}}.</p>
+            <div class="unsubscribe">
+                <a href="{{appUrl}}/settings/notifications">Manage your email preferences</a> |
+                <a href="{{appUrl}}/unsubscribe?email={{recipientEmail}}">Unsubscribe from all notifications</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
