@@ -23,23 +23,29 @@ export async function GET(request: NextRequest) {
     // Get all file shares where the user is the recipient
     const receivedShares = await prisma.fileShare.findMany({
       where: {
-        OR: [
-          { userId: session.user.id },
-          { sharedWithEmail: session.user.email },
+        AND: [
           {
-            group: {
-              members: {
-                some: {
-                  id: session.user.id
+            OR: [
+              { userId: session.user.id },
+              { sharedWithEmail: session.user.email },
+              {
+                group: {
+                  members: {
+                    some: {
+                      id: session.user.id
+                    }
+                  }
                 }
               }
-            }
+            ]
+          },
+          { revoked: false },
+          {
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } }
+            ]
           }
-        ],
-        revoked: false,
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: new Date() } }
         ]
       },
       include: {
@@ -98,29 +104,35 @@ export async function GET(request: NextRequest) {
     // Get total count for pagination
     const totalCount = await prisma.fileShare.count({
       where: {
-        OR: [
-          { userId: session.user.id },
-          { sharedWithEmail: session.user.email },
+        AND: [
           {
-            group: {
-              members: {
-                some: {
-                  id: session.user.id
+            OR: [
+              { userId: session.user.id },
+              { sharedWithEmail: session.user.email },
+              {
+                group: {
+                  members: {
+                    some: {
+                      id: session.user.id
+                    }
+                  }
                 }
               }
-            }
+            ]
+          },
+          { revoked: false },
+          {
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } }
+            ]
           }
-        ],
-        revoked: false,
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: new Date() } }
         ]
       }
     })
 
     // Transform the data for the frontend
-    const files = receivedShares.map(share => {
+    const files = receivedShares.map((share: any) => {
       const hasViewed = share.accessLogs.length > 0
       const lastViewed = hasViewed ? share.accessLogs[0].createdAt : null
 
@@ -154,7 +166,7 @@ export async function GET(request: NextRequest) {
 
     // Get delivery status for each file
     const filesWithDeliveryStatus = await Promise.all(
-      files.map(async (file) => {
+      files.map(async (file: any) => {
         const deliveryStatus = deliveryTracker.getDeliveryStatus(file.id)
         return {
           ...file,
@@ -173,9 +185,9 @@ export async function GET(request: NextRequest) {
     // Audit logging
     await logAuditEvent({
       userId: session.user.id,
-      action: AuditAction.ACCESS_VIEW,
+      action: AuditAction.FILE_VIEW,
       resource: 'received_files',
-      resourceId: null,
+      resourceId: undefined,
       details: {
         page,
         limit,
