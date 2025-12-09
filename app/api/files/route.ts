@@ -7,6 +7,7 @@ import { encryptFile } from "@/lib/crypto"
 import { emitSocketEvent } from "@/lib/socket"
 import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
 import { sendFileShareNotification, sendBulkShareNotification } from "@/lib/email"
+import { deliveryTracker } from "@/lib/delivery-tracker"
 
 export async function GET() {
   try {
@@ -267,6 +268,23 @@ export async function POST(request: NextRequest) {
           maxAccessCount
         )
         shareResults.push(...userShareResults)
+
+        // Track deliveries for successful user shares
+        const successfulUserShares = userShareResults.filter(r => r.success)
+        for (const result of successfulUserShares) {
+          const deliveryId = deliveryTracker.trackDelivery({
+            shareId: result.share.id,
+            recipientId: result.recipientUser.id,
+            recipientEmail: result.email,
+            status: 'pending',
+            notificationChannels: ['email', 'push'], // Default channels
+            sentAt: new Date(),
+            retryCount: 0,
+            maxRetries: 3
+          })
+
+          console.log(`📬 Delivery tracking created for ${result.email}: ${deliveryId}`)
+        }
       }
 
       // Validate and process group shares

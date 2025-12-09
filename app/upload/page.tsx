@@ -3,6 +3,8 @@
 import { useState, useRef, useCallback, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { encryptFile, generateKey } from "@/lib/crypto"
+import EnhancedDragDropUpload from "@/components/EnhancedDragDropUpload"
+import { useResumableUpload } from "@/lib/useResumableUpload"
 
 interface FilePreview {
   file: File
@@ -25,19 +27,20 @@ interface UploadQueueItem {
 }
 
 export default function Upload() {
-  const { data: session } = useSession()
-  const [files, setFiles] = useState<FilePreview[]>([])
-  const [encrypt, setEncrypt] = useState(true)
-  const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const [message, setMessage] = useState("")
-  const [selectedType, setSelectedType] = useState<string>("")
-  const [encryptionKey, setEncryptionKey] = useState("")
-  const [customKey, setCustomKey] = useState("")
-  const [useCustomKey, setUseCustomKey] = useState(false)
-  const [recipients, setRecipients] = useState<string[]>([])
-  const [newRecipient, setNewRecipient] = useState("")
-  const [shareMode, setShareMode] = useState<"upload" | "share">("upload")
+   const { data: session } = useSession()
+   const [files, setFiles] = useState<FilePreview[]>([])
+   const [encrypt, setEncrypt] = useState(true)
+   const [uploading, setUploading] = useState(false)
+   const [uploadProgress, setUploadProgress] = useState(0)
+   const [message, setMessage] = useState("")
+   const [selectedType, setSelectedType] = useState<string>("")
+   const [encryptionKey, setEncryptionKey] = useState("")
+   const [customKey, setCustomKey] = useState("")
+   const [useCustomKey, setUseCustomKey] = useState(false)
+   const [recipients, setRecipients] = useState<string[]>([])
+   const [newRecipient, setNewRecipient] = useState("")
+   const [shareMode, setShareMode] = useState<"upload" | "share">("upload")
+
 
   // New state for enhanced functionality
   const [isDragOver, setIsDragOver] = useState(false)
@@ -53,6 +56,24 @@ export default function Upload() {
   const [uploadHistory, setUploadHistory] = useState<any[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [resumableUploads, setResumableUploads] = useState<Map<string, any>>(new Map())
+
+  // Enhanced upload features
+  const [useEnhancedUpload, setUseEnhancedUpload] = useState(true)
+
+  // Resumable upload hook
+  const resumableUpload = useResumableUpload({
+    onProgress: (progress) => {
+      console.log('Upload progress:', progress)
+    },
+    onComplete: (fileId) => {
+      console.log('Upload completed:', fileId)
+      setMessage('File uploaded successfully!')
+    },
+    onError: (error) => {
+      console.error('Upload error:', error)
+      setMessage(`Upload failed: ${error}`)
+    }
+  })
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -734,6 +755,33 @@ export default function Upload() {
               </div>
             </div>
 
+            {/* Upload Mode Toggle */}
+            <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-medium text-gray-800 dark:text-white">Upload Mode</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {useEnhancedUpload
+                      ? "Enhanced upload with resumable transfers, compression, and progress tracking"
+                      : "Legacy upload system"
+                    }
+                  </p>
+                </div>
+                <button
+                  onClick={() => setUseEnhancedUpload(!useEnhancedUpload)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    useEnhancedUpload ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      useEnhancedUpload ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
             {/* File Selection */}
             {selectedType && (
               <div className="mb-8">
@@ -741,86 +789,101 @@ export default function Upload() {
                   Choose Your {fileTypes.find(t => t.id === selectedType)?.name} Files
                 </label>
 
-                {/* Drag & Drop Zone */}
-                <div
-                  ref={dropZoneRef}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200 touch-manipulation ${
-                    isDragOver
-                      ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20 scale-105"
-                      : "border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-800"
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    onChange={handleFileChange}
-                    accept={getAcceptString(selectedType)}
-                    multiple
-                    className="hidden"
-                    id="file-upload"
+                {useEnhancedUpload ? (
+                  // Enhanced upload with resumable transfers
+                  <EnhancedDragDropUpload
+                    maxFiles={10}
+                    maxFileSize={500 * 1024 * 1024} // 500MB
+                    acceptedTypes={[getAcceptString(selectedType)]}
+                    enableCompression={compressionEnabled}
+                    compressionQuality={compressionQuality}
+                    onFilesUploaded={(uploadedFiles) => {
+                      console.log('Files uploaded:', uploadedFiles)
+                      setMessage(`${uploadedFiles.length} file(s) uploaded successfully!`)
+                    }}
                   />
-
-                  {/* Camera input for mobile */}
-                  {cameraSupported && selectedType === 'photos' && (
+                ) : (
+                  // Legacy drag & drop zone
+                  <div
+                    ref={dropZoneRef}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200 touch-manipulation ${
+                      isDragOver
+                        ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20 scale-105"
+                        : "border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    }`}
+                  >
                     <input
-                      ref={cameraInputRef}
+                      ref={fileInputRef}
                       type="file"
-                      accept="image/*"
-                      capture="environment"
                       onChange={handleFileChange}
+                      accept={getAcceptString(selectedType)}
+                      multiple
                       className="hidden"
-                      id="camera-upload"
+                      id="file-upload"
                     />
-                  )}
 
-                  <label htmlFor="file-upload" className="cursor-pointer block">
-                    <div className="text-6xl mb-4">📁</div>
-                    <p className="text-lg mb-2">
-                      {isDragOver ? "Drop files here!" : "Click to select files or drag and drop"}
-                    </p>
-                    <p className="text-sm text-gray-500 mb-4">
-                      Supported formats: {fileTypes.find(t => t.id === selectedType)?.accept.replace(/\./g, "").toUpperCase()}
-                    </p>
-                    <p className="text-sm text-gray-500 mb-4">Maximum file size: 500MB per file</p>
+                    {/* Camera input for mobile */}
+                    {cameraSupported && selectedType === 'photos' && (
+                      <input
+                        ref={cameraInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFileChange}
+                        className="hidden"
+                        id="camera-upload"
+                      />
+                    )}
 
-                    {/* Action buttons */}
-                    <div className="flex flex-wrap justify-center gap-3 mt-4">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          fileInputRef.current?.click()
-                        }}
-                        className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors touch-manipulation"
-                      >
-                        📁 Browse Files
-                      </button>
+                    <label htmlFor="file-upload" className="cursor-pointer block">
+                      <div className="text-6xl mb-4">📁</div>
+                      <p className="text-lg mb-2">
+                        {isDragOver ? "Drop files here!" : "Click to select files or drag and drop"}
+                      </p>
+                      <p className="text-sm text-gray-500 mb-4">
+                        Supported formats: {fileTypes.find(t => t.id === selectedType)?.accept.replace(/\./g, "").toUpperCase()}
+                      </p>
+                      <p className="text-sm text-gray-500 mb-4">Maximum file size: 500MB per file</p>
 
-                      {cameraSupported && selectedType === 'photos' && (
+                      {/* Action buttons */}
+                      <div className="flex flex-wrap justify-center gap-3 mt-4">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.preventDefault()
-                            handleCameraCapture()
+                            fileInputRef.current?.click()
                           }}
-                          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors touch-manipulation"
+                          className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors touch-manipulation"
                         >
-                          📷 Take Photo
+                          📁 Browse Files
                         </button>
-                      )}
-                    </div>
-                  </label>
 
-                  {/* Drag overlay */}
-                  {isDragOver && (
-                    <div className="absolute inset-0 bg-blue-500 bg-opacity-10 rounded-lg flex items-center justify-center">
-                      <div className="text-blue-600 text-xl font-semibold">Drop files here</div>
-                    </div>
-                  )}
-                </div>
+                        {cameraSupported && selectedType === 'photos' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              handleCameraCapture()
+                            }}
+                            className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors touch-manipulation"
+                          >
+                            📷 Take Photo
+                          </button>
+                        )}
+                      </div>
+                    </label>
+
+                    {/* Drag overlay */}
+                    {isDragOver && (
+                      <div className="absolute inset-0 bg-blue-500 bg-opacity-10 rounded-lg flex items-center justify-center">
+                        <div className="text-blue-600 text-xl font-semibold">Drop files here</div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Selected Files Preview */}
                 {files.length > 0 && (
@@ -1039,6 +1102,48 @@ export default function Upload() {
                         <p className="text-sm text-gray-500 italic">No recipients added yet</p>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {/* Compression Settings */}
+                {useEnhancedUpload && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 mb-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={compressionEnabled}
+                          onChange={(e) => setCompressionEnabled(e.target.checked)}
+                          className="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500 dark:focus:ring-green-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                        />
+                        <div>
+                          <span className="font-medium text-green-800 dark:text-green-200">Auto-Compress Images</span>
+                          <p className="text-sm text-green-600 dark:text-green-300">Reduce file size while maintaining quality</p>
+                        </div>
+                      </div>
+                      <span className="text-green-600 font-medium">📦 Smart</span>
+                    </div>
+
+                    {compressionEnabled && (
+                      <div className="mt-3">
+                        <label className="block text-sm font-medium mb-2 text-green-800 dark:text-green-200">
+                          Compression Quality: {Math.round(compressionQuality * 100)}%
+                        </label>
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.1"
+                          value={compressionQuality}
+                          onChange={(e) => setCompressionQuality(parseFloat(e.target.value))}
+                          className="w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer dark:bg-green-700"
+                        />
+                        <div className="flex justify-between text-xs text-green-600 dark:text-green-400 mt-1">
+                          <span>Better Compression</span>
+                          <span>Higher Quality</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
