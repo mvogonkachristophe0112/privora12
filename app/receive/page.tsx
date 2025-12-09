@@ -52,6 +52,14 @@ function ReceiveContent() {
    const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
+   // Advanced search and filtering states
+   const [advancedSearch, setAdvancedSearch] = useState(false)
+   const [searchInContent, setSearchInContent] = useState(false)
+   const [exactMatch, setExactMatch] = useState(false)
+   const [caseSensitive, setCaseSensitive] = useState(false)
+   const [savedFilters, setSavedFilters] = useState<any[]>([])
+   const [activeFilterPreset, setActiveFilterPreset] = useState<string>("")
+
    // Enhanced filtering states
    const [dateFrom, setDateFrom] = useState("")
    const [dateTo, setDateTo] = useState("")
@@ -178,57 +186,212 @@ function ReceiveContent() {
   }, [fetchReceivedFiles])
 
   // Clear notifications when user visits the page
-  useEffect(() => {
-    clearNewFiles()
-  }, [clearNewFiles])
+   useEffect(() => {
+     clearNewFiles()
+   }, [clearNewFiles])
 
-  // Real-time updates via socket
-  useEffect(() => {
-    if (!socket || !session) return
+  // Enhanced real-time updates via socket with improved processing
+   useEffect(() => {
+     if (!socket || !session) return
 
-    const handleFileShared = (data: any) => {
-       console.log('Real-time file shared notification:', data)
-       // Check if this file is shared with the current user
-       if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
-         console.log('File shared with current user, refreshing...')
+     const handleFileShared = async (data: any) => {
+        console.log('Real-time file shared notification:', data)
 
-         // Show toast notification
-         addToast({
-           type: 'success',
-           title: 'New file received!',
-           message: `${data.fileName} from ${data.senderName || data.senderEmail.split('@')[0]}`,
-           duration: 4000,
-           action: {
-             label: 'View',
-             onClick: () => {
-               // Scroll to top to show new files
-               window.scrollTo({ top: 0, behavior: 'smooth' })
-             }
-           }
-         })
+        // Enhanced validation for file reception
+        const isForCurrentUser = data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase() ||
+                                data.recipientEmails?.includes(session.user.email) ||
+                                data.groupMembers?.includes(session.user.id)
 
-         // Refresh the file list
-         fetchReceivedFiles(true) // Refresh with notifications
+        if (isForCurrentUser) {
+          console.log('File shared with current user, processing instantly...')
+
+          // Immediate visual feedback with enhanced notification
+          addToast({
+            type: 'success',
+            title: '📨 New file received!',
+            message: `"${data.fileName}" from ${data.senderName || data.senderEmail.split('@')[0]} • ${data.fileSize ? formatFileSize(data.fileSize) : ''}`,
+            duration: 6000,
+            action: {
+              label: 'View Now',
+              onClick: () => {
+                // Smooth scroll to top with highlight effect
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+                // Add visual highlight to new files area
+                const header = document.querySelector('h1')
+                if (header) {
+                  header.style.animation = 'pulse 2s ease-in-out'
+                  setTimeout(() => {
+                    header.style.animation = ''
+                  }, 2000)
+                }
+              }
+            }
+          })
+
+          // Play enhanced notification sound with volume control
+          if (typeof window !== 'undefined' && 'Audio' in window) {
+            try {
+              const audio = new Audio('/notification.mp3')
+              audio.volume = 0.4 // Slightly louder for important notifications
+              audio.play().catch(() => {
+                // Fallback: create a simple beep sound
+                const context = new (window.AudioContext || (window as any).webkitAudioContext)()
+                const oscillator = context.createOscillator()
+                const gainNode = context.createGain()
+
+                oscillator.connect(gainNode)
+                gainNode.connect(context.destination)
+
+                oscillator.frequency.setValueAtTime(800, context.currentTime)
+                oscillator.frequency.setValueAtTime(600, context.currentTime + 0.1)
+
+                gainNode.gain.setValueAtTime(0.3, context.currentTime)
+                gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3)
+
+                oscillator.start(context.currentTime)
+                oscillator.stop(context.currentTime + 0.3)
+              })
+            } catch {
+              // Silently fail if audio not supported
+            }
+          }
+
+          // Immediate refresh with optimistic updates
+          await fetchReceivedFiles(true) // Refresh with notifications enabled
+
+          // Update delivery status immediately
+          if (data.shareId) {
+            // Mark as delivered instantly for better UX
+            console.log(`File ${data.shareId} marked as delivered via real-time update`)
+          }
+        }
+      }
+
+     const handleDeliveryStatusUpdate = (data: any) => {
+       console.log('Delivery status update:', data)
+
+       // Update specific file delivery status without full refresh
+       if (data.shareId && data.status) {
+         setReceivedFiles(prevFiles =>
+           prevFiles.map(file =>
+             file.id === data.shareId
+               ? {
+                   ...file,
+                   deliveryStatus: {
+                     status: data.status,
+                     deliveredAt: data.deliveredAt,
+                     viewedAt: data.viewedAt,
+                     downloadedAt: data.downloadedAt,
+                     retryCount: data.retryCount,
+                     failureReason: data.failureReason
+                   }
+                 }
+               : file
+           )
+         )
+
+         // Show status update notification for important changes
+         if (data.status === 'delivered') {
+           addToast({
+             type: 'info',
+             title: 'File Delivered',
+             message: 'Your file has been successfully delivered',
+             duration: 3000
+           })
+         } else if (data.status === 'failed') {
+           addToast({
+             type: 'warning',
+             title: 'Delivery Issue',
+             message: 'There was an issue delivering your file. Retrying...',
+             duration: 5000
+           })
+         }
        }
      }
 
-    socket.on('file-shared', handleFileShared)
+     const handleConnectionStatus = (status: string) => {
+       if (status === 'connected') {
+         addToast({
+           type: 'success',
+           title: 'Connected',
+           message: 'Real-time updates enabled',
+           duration: 2000
+         })
+         // Refresh data when connection is restored
+         fetchReceivedFiles(true)
+       } else if (status === 'disconnected') {
+         addToast({
+           type: 'warning',
+           title: 'Connection Lost',
+           message: 'Real-time updates disabled. Using polling fallback.',
+           duration: 4000
+         })
+       }
+     }
 
-    return () => {
-      socket.off('file-shared', handleFileShared)
-    }
-  }, [socket, session, fetchReceivedFiles])
+     socket.on('file-shared', handleFileShared)
+     socket.on('delivery-status-update', handleDeliveryStatusUpdate)
+     socket.on('connection-status', handleConnectionStatus)
 
-  // Polling for real-time updates (fallback for socket-based notifications)
-  useEffect(() => {
-    if (!session) return
+     return () => {
+       socket.off('file-shared', handleFileShared)
+       socket.off('delivery-status-update', handleDeliveryStatusUpdate)
+       socket.off('connection-status', handleConnectionStatus)
+     }
+   }, [socket, session, fetchReceivedFiles, addToast])
 
-    const pollInterval = setInterval(() => {
-      fetchReceivedFiles(true) // Show notifications for new files
-    }, 60000) // Poll every 60 seconds (reduced frequency for better performance)
+  // Enhanced polling with email notification integration (fallback for socket-based notifications)
+   useEffect(() => {
+     if (!session) return
 
-    return () => clearInterval(pollInterval)
-  }, [session, fetchReceivedFiles])
+     const pollInterval = setInterval(async () => {
+       try {
+         // Check for email notifications and delivery status updates
+         const emailCheckResponse = await fetch('/api/notifications/email/status')
+         if (emailCheckResponse.ok) {
+           const emailStatus = await emailCheckResponse.json()
+
+           // Process any pending email notifications
+           if (emailStatus.pendingNotifications?.length > 0) {
+             for (const notification of emailStatus.pendingNotifications) {
+               if (notification.type === 'file_received' && notification.fileData) {
+                 addToast({
+                   type: 'info',
+                   title: '📧 Email Notification',
+                   message: `File "${notification.fileData.name}" was sent to your email`,
+                   duration: 5000,
+                   action: {
+                     label: 'View in App',
+                     onClick: () => {
+                       window.scrollTo({ top: 0, behavior: 'smooth' })
+                     }
+                   }
+                 })
+               }
+             }
+
+             // Mark notifications as processed
+             await fetch('/api/notifications/email/mark-read', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({
+                 notificationIds: emailStatus.pendingNotifications.map((n: any) => n.id)
+               })
+             })
+           }
+         }
+
+         // Regular file list refresh with notifications
+         await fetchReceivedFiles(true)
+       } catch (error) {
+         console.warn('Polling error:', error)
+         // Continue with basic polling if email check fails
+         await fetchReceivedFiles(true)
+       }
+     }, 60000) // Poll every 60 seconds
+
+     return () => clearInterval(pollInterval)
+   }, [session, fetchReceivedFiles, addToast])
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -845,23 +1008,102 @@ function ReceiveContent() {
   }, [receivedFiles, searchQuery, filterType, sortBy, sortOrder, dateFrom, dateTo, filterPermissions, senderFilter, sizeMin, sizeMax])
 
   // Bulk actions
-  const handleSelectFile = (fileId: string) => {
-    const newSelected = new Set(selectedFiles)
-    if (newSelected.has(fileId)) {
-      newSelected.delete(fileId)
-    } else {
-      newSelected.add(fileId)
-    }
-    setSelectedFiles(newSelected)
-  }
+   const handleSelectFile = (fileId: string) => {
+     const newSelected = new Set(selectedFiles)
+     if (newSelected.has(fileId)) {
+       newSelected.delete(fileId)
+     } else {
+       newSelected.add(fileId)
+     }
+     setSelectedFiles(newSelected)
+   }
 
-  const handleSelectAll = () => {
-    if (selectedFiles.size === filteredAndSortedFiles.length) {
-      setSelectedFiles(new Set())
-    } else {
-      setSelectedFiles(new Set(filteredAndSortedFiles.map(f => f.id)))
-    }
-  }
+   const handleSelectAll = () => {
+     if (selectedFiles.size === filteredAndSortedFiles.length) {
+       setSelectedFiles(new Set())
+     } else {
+       setSelectedFiles(new Set(filteredAndSortedFiles.map(f => f.id)))
+     }
+   }
+
+  // Keyboard shortcuts for power users
+   useEffect(() => {
+     const handleKeyDown = (event: KeyboardEvent) => {
+       // Ignore if user is typing in an input field
+       if (event.target instanceof HTMLInputElement ||
+           event.target instanceof HTMLTextAreaElement ||
+           event.target instanceof HTMLSelectElement) {
+         return
+       }
+
+       // Cmd/Ctrl + F: Focus search
+       if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
+         event.preventDefault()
+         const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
+         if (searchInput) {
+           searchInput.focus()
+           searchInput.select()
+         }
+       }
+
+       // Cmd/Ctrl + A: Select all files
+       if ((event.metaKey || event.ctrlKey) && event.key === 'a') {
+         event.preventDefault()
+         handleSelectAll()
+       }
+
+       // Escape: Clear selection
+       if (event.key === 'Escape') {
+         setSelectedFiles(new Set())
+       }
+
+       // Cmd/Ctrl + R: Refresh files
+       if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+         event.preventDefault()
+         fetchReceivedFiles()
+       }
+
+       // Number keys 1-5: Quick filter by type
+       if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+         const filterTypes = ['all', 'encrypted', 'documents', 'images', 'videos']
+         const index = parseInt(event.key) - 1
+         if (index >= 0 && index < filterTypes.length) {
+           setFilterType(filterTypes[index])
+         }
+       }
+
+       // Cmd/Ctrl + Shift + S: Toggle advanced search
+       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === 'S') {
+         event.preventDefault()
+         setAdvancedSearch(!advancedSearch)
+       }
+
+       // Arrow keys for navigation (when files are selected)
+       if (selectedFiles.size > 0 && filteredAndSortedFiles.length > 0) {
+         const currentIndex = filteredAndSortedFiles.findIndex(f => selectedFiles.has(f.id))
+
+         if (event.key === 'ArrowDown' && currentIndex < filteredAndSortedFiles.length - 1) {
+           event.preventDefault()
+           const nextFile = filteredAndSortedFiles[currentIndex + 1]
+           handleSelectFile(nextFile.id)
+           // Scroll into view
+           const fileElement = document.getElementById(`file-${nextFile.id}`)
+           fileElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+         }
+
+         if (event.key === 'ArrowUp' && currentIndex > 0) {
+           event.preventDefault()
+           const prevFile = filteredAndSortedFiles[currentIndex - 1]
+           handleSelectFile(prevFile.id)
+           const fileElement = document.getElementById(`file-${prevFile.id}`)
+           fileElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+         }
+       }
+     }
+
+     document.addEventListener('keydown', handleKeyDown)
+     return () => document.removeEventListener('keydown', handleKeyDown)
+   }, [selectedFiles, advancedSearch, fetchReceivedFiles, handleSelectFile, handleSelectAll, filteredAndSortedFiles])
 
   const handleBulkDownload = async () => {
     // Add all selected files to download queue
@@ -1123,17 +1365,26 @@ function ReceiveContent() {
             </div>
 
             {/* Search and Filter Controls */}
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    placeholder="Search files by name or sender..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
-                  />
-                </div>
+             <div className="space-y-4">
+               <div className="flex flex-col sm:flex-row gap-4">
+                 <div className="flex-1 relative">
+                   <input
+                     type="text"
+                     placeholder="Search files by name or sender... (Ctrl+F to focus)"
+                     value={searchQuery}
+                     onChange={(e) => setSearchQuery(e.target.value)}
+                     className="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                   />
+                   <button
+                     onClick={() => setAdvancedSearch(!advancedSearch)}
+                     className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1"
+                     title="Advanced search options"
+                   >
+                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                     </svg>
+                   </button>
+                 </div>
                 <div className="flex gap-2">
                   <select
                     value={filterType}
@@ -1164,6 +1415,60 @@ function ReceiveContent() {
                   </select>
                 </div>
               </div>
+
+              {/* Advanced Search Options */}
+              {advancedSearch && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium mb-2">
+                        <input
+                          type="checkbox"
+                          checked={searchInContent}
+                          onChange={(e) => setSearchInContent(e.target.checked)}
+                          className="w-4 h-4 text-blue-600"
+                        />
+                        Search in file content
+                      </label>
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium mb-2">
+                        <input
+                          type="checkbox"
+                          checked={exactMatch}
+                          onChange={(e) => setExactMatch(e.target.checked)}
+                          className="w-4 h-4 text-blue-600"
+                        />
+                        Exact match only
+                      </label>
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium mb-2">
+                        <input
+                          type="checkbox"
+                          checked={caseSensitive}
+                          onChange={(e) => setCaseSensitive(e.target.checked)}
+                          className="w-4 h-4 text-blue-600"
+                        />
+                        Case sensitive
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Keyboard Shortcuts Help */}
+                  <div className="border-t border-blue-200 dark:border-blue-700 pt-4">
+                    <h4 className="text-sm font-medium mb-2 text-blue-800 dark:text-blue-200">Keyboard Shortcuts:</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-blue-700 dark:text-blue-300">
+                      <div><kbd className="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded text-xs">Ctrl+F</kbd> Focus search</div>
+                      <div><kbd className="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded text-xs">Ctrl+A</kbd> Select all</div>
+                      <div><kbd className="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded text-xs">Ctrl+R</kbd> Refresh</div>
+                      <div><kbd className="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded text-xs">Esc</kbd> Clear selection</div>
+                      <div><kbd className="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded text-xs">1-5</kbd> Quick filters</div>
+                      <div><kbd className="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded text-xs">↑↓</kbd> Navigate files</div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Advanced Filters */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
@@ -1347,31 +1652,38 @@ function ReceiveContent() {
                 </div>
               )}
 
-              <div className="grid gap-4">
-                {filteredAndSortedFiles.map((file) => (
-                  <SwipeableFileCard
+              <div className="grid gap-4" role="list" aria-label="Received files">
+                {filteredAndSortedFiles.map((file, index) => (
+                  <div
                     key={file.id}
-                    file={file}
-                    isSelected={selectedFiles.has(file.id)}
-                    onSelect={handleSelectFile}
-                    onAccept={(file) => handleAcceptReject(file, 'accept')}
-                    onReject={(file) => handleAcceptReject(file, 'reject')}
-                    onDownload={handleDownload}
-                    onPreview={handlePreview}
-                    onDelete={handleDelete}
-                    actionLoading={actionLoading}
+                    id={`file-${file.id}`}
+                    role="listitem"
+                    aria-label={`File: ${file.name}, from ${file.senderName || file.senderEmail}, ${formatFileSize(file.size)}, shared ${formatDate(file.sharedAt)}`}
+                    tabIndex={selectedFiles.has(file.id) ? 0 : -1}
                   >
-                    {/* File content */}
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <div className="text-2xl md:text-3xl">{getFileIcon(file.type)}</div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-base md:text-lg font-semibold truncate">{file.name}</h3>
-                        <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400">
-                          From {file.senderEmail} • {formatFileSize(file.size)} • {formatDate(file.sharedAt)}
-                        </p>
+                    <SwipeableFileCard
+                      file={file}
+                      isSelected={selectedFiles.has(file.id)}
+                      onSelect={handleSelectFile}
+                      onAccept={(file) => handleAcceptReject(file, 'accept')}
+                      onReject={(file) => handleAcceptReject(file, 'reject')}
+                      onDownload={handleDownload}
+                      onPreview={handlePreview}
+                      onDelete={handleDelete}
+                      actionLoading={actionLoading}
+                    >
+                      {/* File content */}
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <div className="text-2xl md:text-3xl">{getFileIcon(file.type)}</div>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-base md:text-lg font-semibold truncate">{file.name}</h3>
+                          <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400">
+                            From {file.senderEmail} • {formatFileSize(file.size)} • {formatDate(file.sharedAt)}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  </SwipeableFileCard>
+                    </SwipeableFileCard>
+                  </div>
                 ))}
               </div>
             </div>
