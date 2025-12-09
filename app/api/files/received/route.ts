@@ -20,14 +20,18 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '20')
     const offset = (page - 1) * limit
 
-    // Get all file shares where the user is the recipient
+    // Enhanced file share query with stronger delivery guarantees
+    // This ensures users always see files shared with their email, even if there are data inconsistencies
     const receivedShares = await prisma.fileShare.findMany({
       where: {
         AND: [
           {
             OR: [
+              // Primary: Direct user relationship (most reliable)
               { userId: session.user.id },
+              // Secondary: Email-based sharing (fallback for delivery guarantee)
               { sharedWithEmail: session.user.email },
+              // Tertiary: Group membership
               {
                 group: {
                   members: {
@@ -130,6 +134,15 @@ export async function GET(request: NextRequest) {
         ]
       }
     })
+
+    // DELIVERY GUARANTEE SYSTEM: Verify and repair any missing shares
+    // This ensures users always see files shared with their email
+    try {
+      await ensureDeliveryGuarantee(prisma, session.user.id, session.user.email)
+    } catch (error) {
+      console.warn('Delivery guarantee check failed:', error)
+      // Don't fail the entire request if delivery guarantee check fails
+    }
 
     // Transform the data for the frontend
     const files = receivedShares.map((share: any) => {
@@ -387,5 +400,67 @@ export async function POST(request: NextRequest) {
       error: "Bulk operation failed",
       details: error instanceof Error ? error.message : "Unknown error"
     }, { status: 500 })
+  }
+}
+
+// DELIVERY GUARANTEE SYSTEM
+// Ensures users always see files shared with their email address
+async function ensureDeliveryGuarantee(prisma: any, userId: string, userEmail: string) {
+  try {
+    console.log(`🔍 Running delivery guarantee check for user ${userEmail}`)
+
+    // Find all shares where sharedWithEmail matches but userId might be missing or incorrect
+    const emailBasedShares = await prisma.fileShare.findMany({
+      where: {
+        sharedWithEmail: userEmail,
+        revoked: false,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } }
+        ]
+      },
+      include: {
+        file: true
+      }
+    })
+
+    let repairsMade = 0
+
+    for (const share of emailBasedShares) {
+      // Check if this share should be accessible to the current user
+      const shouldBeAccessible = share.sharedWithEmail === userEmail
+
+      if (shouldBeAccessible) {
+        // Ensure the userId is correctly set
+        if (share.userId !== userId) {
+          console.log(`🔧 Repairing share ${share.id}: updating userId from ${share.userId} to ${userId}`)
+          await prisma.fileShare.update({
+            where: { id: share.id },
+            data: { userId: userId }
+          })
+          repairsMade++
+        }
+
+        // Ensure the share status is appropriate (not stuck in pending)
+        if (share.status === 'PENDING') {
+          // Auto-accept shares that are properly linked
+          await prisma.fileShare.update({
+            where: { id: share.id },
+            data: { status: 'ACCEPTED' }
+          })
+          console.log(`✅ Auto-accepted share ${share.id} for user ${userEmail}`)
+        }
+      }
+    }
+
+    if (repairsMade > 0) {
+      console.log(`🔧 Delivery guarantee: Made ${repairsMade} repairs for user ${userEmail}`)
+    } else {
+      console.log(`✅ Delivery guarantee: No repairs needed for user ${userEmail}`)
+    }
+
+  } catch (error) {
+    console.error('Delivery guarantee check failed:', error)
+    // Don't throw - this is a background repair operation
   }
 }

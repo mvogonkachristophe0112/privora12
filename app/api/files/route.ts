@@ -255,12 +255,13 @@ export async function POST(request: NextRequest) {
       console.log('Recipients:', recipients.length, 'Groups:', groups.length)
       console.log('Permissions:', permissions, 'Expires:', expiresAt, 'Password:', !!password)
 
-      // Validate and process user shares
+      // Validate and process user shares with transaction guarantee
       if (recipients.length > 0) {
         const userShareResults = await processUserShares(
           prisma,
           newFile.id,
           session.user.id,
+          session.user.email,
           recipients,
           permissions,
           expiresAt,
@@ -269,21 +270,27 @@ export async function POST(request: NextRequest) {
         )
         shareResults.push(...userShareResults)
 
-        // Track deliveries for successful user shares
-        const successfulUserShares = userShareResults.filter(r => r.success)
-        for (const result of successfulUserShares) {
-          const deliveryId = deliveryTracker.trackDelivery({
-            shareId: result.share.id,
-            recipientId: result.recipientUser.id,
-            recipientEmail: result.email,
-            status: 'pending',
-            notificationChannels: ['email', 'push'], // Default channels
-            sentAt: new Date(),
-            retryCount: 0,
-            maxRetries: 3
-          })
-
-          console.log(`📬 Delivery tracking created for ${result.email}: ${deliveryId}`)
+        // CRITICAL: Only proceed with delivery tracking if shares were successfully created
+        const successfulUserShares = userShareResults.filter(r => r.success && r.deliveryGuaranteed)
+        if (successfulUserShares.length > 0) {
+          for (const result of successfulUserShares) {
+            try {
+              const deliveryId = deliveryTracker.trackDelivery({
+                shareId: result.share.id,
+                recipientId: result.recipientUser.id,
+                recipientEmail: result.email,
+                status: 'pending',
+                notificationChannels: ['email', 'push'], // Default channels
+                sentAt: new Date(),
+                retryCount: 0,
+                maxRetries: 3
+              })
+              console.log(`📬 Delivery tracking created for ${result.email}: ${deliveryId}`)
+            } catch (deliveryError) {
+              console.error(`Failed to track delivery for ${result.email}:`, deliveryError)
+              // Don't fail the entire operation for delivery tracking issues
+            }
+          }
         }
       }
 
@@ -302,6 +309,40 @@ export async function POST(request: NextRequest) {
         shareResults.push(...groupShareResults)
       }
 
+      // DELIVERY GUARANTEE: Verify all successful shares are properly saved before proceeding
+      const successfulShares = shareResults.filter(r => r.success)
+      if (successfulShares.length > 0) {
+        // Double-check that all shares exist in database
+        const shareIds = successfulShares.map(r => r.share.id).filter(Boolean)
+        const verifiedShares = await prisma.fileShare.findMany({
+          where: {
+            id: { in: shareIds },
+            revoked: false
+          },
+          select: { id: true, sharedWithEmail: true, userId: true }
+        })
+
+        if (verifiedShares.length !== successfulShares.length) {
+          console.error('CRITICAL: Share verification failed - some shares were not properly saved')
+          // This is a serious issue - log it but don't fail the response
+          await logAuditEvent({
+            userId: session.user.id,
+            action: AuditAction.FILE_ACCESS,
+            resource: 'file_share',
+            resourceId: newFile.id,
+            details: {
+              issue: 'share_verification_failed',
+              expectedShares: successfulShares.length,
+              verifiedShares: verifiedShares.length,
+              shareIds
+            },
+            severity: AuditSeverity.HIGH
+          })
+        } else {
+          console.log(`✅ Share verification successful: ${verifiedShares.length} shares confirmed`)
+        }
+      }
+
       // Audit logging for sharing activity
       await logAuditEvent({
         userId: session.user.id,
@@ -315,116 +356,114 @@ export async function POST(request: NextRequest) {
           permissions,
           expiresAt: expiresAt?.toISOString(),
           hasPassword: !!password,
-          maxAccessCount
+          maxAccessCount,
+          successfulShares: successfulShares.length,
+          failedShares: shareResults.filter(r => !r.success).length
         },
         severity: AuditSeverity.LOW
       })
 
-      // Emit enhanced real-time notifications
-      const successfulShares = shareResults.filter(r => r.success)
-      for (const result of successfulShares) {
-        emitSocketEvent('file-shared', {
-          fileId: newFile.id,
-          fileName: newFile.name,
-          senderEmail: session.user.email,
-          senderId: session.user.id,
-          receiverEmail: result.email || result.groupName,
-          receiverId: result.recipientUser?.id || result.groupId,
-          permissions,
-          expiresAt: expiresAt?.toISOString(),
-          sharedAt: new Date().toISOString(),
-          shareType: result.shareType
-        })
+      // Emit enhanced real-time notifications ONLY for verified successful shares
+      const verifiedSuccessfulShares = shareResults.filter(r => r.success && r.deliveryGuaranteed)
+      for (const result of verifiedSuccessfulShares) {
+        try {
+          emitSocketEvent('file-shared', {
+            fileId: newFile.id,
+            fileName: newFile.name,
+            senderEmail: session.user.email,
+            senderId: session.user.id,
+            receiverEmail: result.email || result.groupName,
+            receiverId: result.recipientUser?.id || result.groupId,
+            permissions,
+            expiresAt: expiresAt?.toISOString(),
+            sharedAt: new Date().toISOString(),
+            shareType: result.shareType,
+            shareId: result.share.id // Include share ID for tracking
+          })
+          console.log(`📡 Real-time notification sent for share ${result.share.id}`)
+        } catch (socketError) {
+          console.error(`Failed to emit socket event for share ${result.share.id}:`, socketError)
+        }
       }
 
       console.log('=== ENHANCED SHARING LOGIC END ===')
     }
 
-    // Prepare response with detailed sharing results
-    const successfulShares = shareResults?.filter(r => r.success).length || 0
-    const failedShares = shareResults?.filter(r => !r.success).length || 0
+    // DELIVERY GUARANTEE: Final verification before response
+    let finalSuccessfulShares = 0
+    let finalFailedShares = 0
 
-    let responseMessage = 'File uploaded successfully'
-    if (shareMode === 'share') {
-      if (successfulShares > 0 && failedShares === 0) {
-        responseMessage = `${successfulShares} file(s) uploaded and shared successfully`
-      } else if (successfulShares > 0 && failedShares > 0) {
-        responseMessage = `${successfulShares} file(s) uploaded and shared successfully, ${failedShares} failed`
-      } else if (failedShares > 0) {
-        responseMessage = `File uploaded but sharing failed for ${failedShares} recipient(s)`
+    if (shareMode === 'share' && shareResults) {
+      // Final verification: ensure all claimed successful shares actually exist
+      const claimedSuccessfulShares = shareResults.filter(r => r.success)
+      if (claimedSuccessfulShares.length > 0) {
+        const verifiedShareIds = claimedSuccessfulShares
+          .map(r => r.share?.id)
+          .filter(Boolean)
+
+        if (verifiedShareIds.length > 0) {
+          const verifiedShares = await prisma.fileShare.findMany({
+            where: {
+              id: { in: verifiedShareIds },
+              revoked: false
+            },
+            select: { id: true }
+          })
+
+          finalSuccessfulShares = verifiedShares.length
+          finalFailedShares = claimedSuccessfulShares.length - verifiedShares.length
+
+          if (finalFailedShares > 0) {
+            console.error(`CRITICAL: ${finalFailedShares} shares failed final verification`)
+          }
+        }
       }
     }
 
-    console.log('=== UPLOAD RESPONSE ===')
+    // Prepare response with verified sharing results
+    let responseMessage = 'File uploaded successfully'
+    let responseStatus = true
+
+    if (shareMode === 'share') {
+      if (finalSuccessfulShares > 0 && finalFailedShares === 0) {
+        responseMessage = `File uploaded and shared successfully with ${finalSuccessfulShares} recipient(s)`
+      } else if (finalSuccessfulShares > 0 && finalFailedShares > 0) {
+        responseMessage = `File uploaded and shared with ${finalSuccessfulShares} recipient(s), ${finalFailedShares} failed`
+      } else if (finalFailedShares > 0) {
+        responseMessage = `File uploaded but sharing failed for all recipients`
+        responseStatus = false // Consider this a failure if no shares succeeded
+      }
+    }
+
+    console.log('=== FINAL VERIFICATION ===')
     console.log('File ID:', newFile.id)
-    console.log('File name:', newFile.name)
     console.log('Share mode:', shareMode)
-    console.log('Successful shares:', successfulShares)
-    console.log('Failed shares:', failedShares)
+    console.log('Verified successful shares:', finalSuccessfulShares)
+    console.log('Verified failed shares:', finalFailedShares)
+    console.log('Response status:', responseStatus)
     console.log('Response message:', responseMessage)
     console.log('=== UPLOAD REQUEST END ===\n')
 
     // Send email notifications asynchronously (don't block response)
+    // Only send for verified successful shares
     if (shareMode === 'share' && shareResults) {
-      const successfulUserShares = shareResults.filter(r => r.success && r.shareType === 'USER')
-      if (successfulUserShares.length > 0) {
+      const verifiedSuccessfulUserShares = shareResults.filter(r =>
+        r.success &&
+        r.shareType === 'USER' &&
+        r.deliveryGuaranteed
+      )
+
+      if (verifiedSuccessfulUserShares.length > 0) {
+        // Send notifications asynchronously
         setImmediate(async () => {
           try {
-            // Send individual notifications for single shares
-            if (successfulUserShares.length === 1) {
-              const share = successfulUserShares[0]
-              const shareRecord = share.share
-
-              // Generate download URL with token
-              const downloadToken = `share_${shareRecord.id}_${Date.now()}`
-              const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
-
-              await sendFileShareNotification({
-                recipientEmail: share.email,
-                recipientName: share.recipientUser?.name || undefined,
-                senderEmail: session.user.email!,
-                senderName: session.user.name || undefined,
-                fileName: newFile.originalName || newFile.name,
-                fileSize: newFile.size,
-                fileType: newFile.type,
-                permissions: shareRecord.permissions,
-                expiresAt: shareRecord.expiresAt || undefined,
-                downloadUrl,
-                shareId: shareRecord.id,
-                encrypted: newFile.encrypted,
-              })
-            } else {
-              // Send bulk notification for multiple shares
-              const bulkFiles = successfulUserShares.map(share => {
-                const shareRecord = share.share
-                const downloadToken = `share_${shareRecord.id}_${Date.now()}`
-                const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
-
-                return {
-                  name: newFile.originalName || newFile.name,
-                  size: newFile.size,
-                  type: newFile.type,
-                  permissions: shareRecord.permissions,
-                  expiresAt: shareRecord.expiresAt || undefined,
-                  downloadUrl,
-                  shareId: shareRecord.id,
-                }
-              })
-
-              // Send bulk notifications to each recipient
-              for (const share of successfulUserShares) {
-                await sendBulkShareNotification({
-                  recipientEmail: share.email,
-                  recipientName: share.recipientUser?.name || undefined,
-                  senderEmail: session.user.email!,
-                  senderName: session.user.name || undefined,
-                  files: bulkFiles,
-                  totalFiles: bulkFiles.length,
-                })
-              }
-            }
+            await sendVerifiedEmailNotifications(
+              verifiedSuccessfulUserShares,
+              newFile,
+              session
+            )
           } catch (error) {
-            console.error('Failed to send email notifications:', error)
+            console.error('Failed to send verified email notifications:', error)
           }
         })
       }
@@ -433,12 +472,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ...newFile,
       blobUrl: blob.url,
-      success: true,
+      success: responseStatus,
       message: responseMessage,
       sharingResults: shareMode === 'share' ? {
         totalRecipients: recipients?.length || 0,
-        successfulShares,
-        failedShares,
+        successfulShares: finalSuccessfulShares,
+        failedShares: finalFailedShares,
         results: shareResults
       } : null
     })
@@ -452,11 +491,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Helper function to process user shares
+// Helper function to process user shares with enhanced validation and delivery guarantees
 async function processUserShares(
   prisma: any,
   fileId: string,
   creatorId: string,
+  creatorEmail: string,
   recipients: string[],
   permissions: string[],
   expiresAt: Date | null,
@@ -469,8 +509,8 @@ async function processUserShares(
     try {
       const normalizedEmail = email.trim().toLowerCase()
 
-      // Validate email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      // Enhanced email validation
+      const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
       if (!emailRegex.test(normalizedEmail)) {
         results.push({
           email,
@@ -481,7 +521,18 @@ async function processUserShares(
         continue
       }
 
-      // Check if user exists
+      // Prevent self-sharing
+      if (normalizedEmail === creatorEmail?.toLowerCase()) {
+        results.push({
+          email,
+          success: false,
+          error: 'Cannot share file with yourself',
+          shareType: 'USER'
+        })
+        continue
+      }
+
+      // Check if user exists with enhanced validation
       const recipientUser = await prisma.user.findUnique({
         where: { email: normalizedEmail },
         select: { id: true, email: true, name: true }
@@ -491,47 +542,178 @@ async function processUserShares(
         results.push({
           email,
           success: false,
-          error: 'User not registered in the system',
+          error: 'Recipient email not registered in the system. They must create an account first.',
           shareType: 'USER'
         })
         continue
       }
 
-      // Create share record
-      const share = await prisma.fileShare.create({
-        data: {
+      // Check for existing share to prevent duplicates
+      const existingShare = await prisma.fileShare.findFirst({
+        where: {
           fileId,
-          userId: recipientUser.id,
           sharedWithEmail: normalizedEmail,
-          shareType: 'USER',
-          permissions,
-          password,
-          expiresAt,
-          maxAccessCount,
-          createdBy: creatorId
+          revoked: false,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } }
+          ]
         }
       })
 
+      if (existingShare) {
+        results.push({
+          email,
+          success: false,
+          error: 'File already shared with this recipient',
+          shareType: 'USER',
+          existingShare: true
+        })
+        continue
+      }
+
+      // Create share record with enhanced data integrity
+      const shareData = {
+        fileId,
+        userId: recipientUser.id,
+        sharedWithEmail: normalizedEmail,
+        shareType: 'USER' as const,
+        status: 'PENDING' as const,
+        permissions,
+        password,
+        expiresAt,
+        maxAccessCount,
+        createdBy: creatorId
+      }
+
+      const share = await prisma.fileShare.create({
+        data: shareData,
+        include: {
+          file: {
+            select: {
+              id: true,
+              name: true,
+              size: true,
+              type: true
+            }
+          }
+        }
+      })
+
+      // Verify share was created successfully
+      if (!share || !share.id) {
+        throw new Error('Share creation failed - no share ID returned')
+      }
+
       results.push({
-        email,
+        email: normalizedEmail,
         success: true,
         share,
         recipientUser,
-        shareType: 'USER'
+        shareType: 'USER',
+        deliveryGuaranteed: true
       })
 
     } catch (error) {
       console.error('Error processing user share for', email, ':', error)
+
+      // Enhanced error categorization
+      let errorMessage = 'Unknown error occurred'
+      if (error instanceof Error) {
+        if (error.message.includes('Unique constraint')) {
+          errorMessage = 'File already shared with this recipient'
+        } else if (error.message.includes('Foreign key constraint')) {
+          errorMessage = 'Invalid recipient or file reference'
+        } else {
+          errorMessage = error.message
+        }
+      }
+
       results.push({
         email,
         success: false,
-        error: `Database error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        error: `Failed to share file: ${errorMessage}`,
         shareType: 'USER'
       })
     }
   }
 
   return results
+}
+
+// Verified email notification sender - only sends for confirmed successful shares
+async function sendVerifiedEmailNotifications(
+  verifiedShares: any[],
+  newFile: any,
+  session: any
+) {
+  console.log(`📧 Sending verified email notifications for ${verifiedShares.length} shares`)
+
+  try {
+    // Send individual notifications for single shares
+    if (verifiedShares.length === 1) {
+      const share = verifiedShares[0]
+      const shareRecord = share.share
+
+      // Generate download URL with token
+      const downloadToken = `share_${shareRecord.id}_${Date.now()}`
+      const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
+
+      await sendFileShareNotification({
+        recipientEmail: share.email,
+        recipientName: share.recipientUser?.name || undefined,
+        senderEmail: session.user.email!,
+        senderName: session.user.name || undefined,
+        fileName: newFile.originalName || newFile.name,
+        fileSize: newFile.size,
+        fileType: newFile.type,
+        permissions: shareRecord.permissions,
+        expiresAt: shareRecord.expiresAt || undefined,
+        downloadUrl,
+        shareId: shareRecord.id,
+        encrypted: newFile.encrypted,
+      })
+
+      console.log(`✅ Email notification sent to ${share.email}`)
+    } else {
+      // Send bulk notification for multiple shares
+      const bulkFiles = verifiedShares.map(share => {
+        const shareRecord = share.share
+        const downloadToken = `share_${shareRecord.id}_${Date.now()}`
+        const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
+
+        return {
+          name: newFile.originalName || newFile.name,
+          size: newFile.size,
+          type: newFile.type,
+          permissions: shareRecord.permissions,
+          expiresAt: shareRecord.expiresAt || undefined,
+          downloadUrl,
+          shareId: shareRecord.id,
+        }
+      })
+
+      // Send bulk notifications to each recipient
+      for (const share of verifiedShares) {
+        try {
+          await sendBulkShareNotification({
+            recipientEmail: share.email,
+            recipientName: share.recipientUser?.name || undefined,
+            senderEmail: session.user.email!,
+            senderName: session.user.name || undefined,
+            files: bulkFiles,
+            totalFiles: bulkFiles.length,
+          })
+          console.log(`✅ Bulk email notification sent to ${share.email}`)
+        } catch (individualError) {
+          console.error(`Failed to send bulk notification to ${share.email}:`, individualError)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to send verified email notifications:', error)
+    throw error // Re-throw to be handled by caller
+  }
 }
 
 // Helper function to process group shares
