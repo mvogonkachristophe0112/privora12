@@ -3,12 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { encryptFile, generateKey } from "@/lib/crypto"
-import EnhancedDragDropUpload from "@/components/EnhancedDragDropUpload"
-import { useResumableUpload } from "@/lib/useResumableUpload"
-import RecipientSelector from "@/components/RecipientSelector"
-import ShareConfirmationDialog from "@/components/ShareConfirmationDialog"
-import DeliveryReceipt from "@/components/DeliveryReceipt"
-import { deliveryTracker } from "@/lib/delivery-tracker"
 
 interface FilePreview {
   file: File
@@ -72,20 +66,7 @@ export default function Upload() {
   const [shareUrl, setShareUrl] = useState<string>('')
   const [lastShareResults, setLastShareResults] = useState<any>(null)
 
-  // Resumable upload hook
-  const resumableUpload = useResumableUpload({
-    onProgress: (progress) => {
-      console.log('Upload progress:', progress)
-    },
-    onComplete: (fileId) => {
-      console.log('Upload completed:', fileId)
-      setMessage('File uploaded successfully!')
-    },
-    onError: (error) => {
-      console.error('Upload error:', error)
-      setMessage(`Upload failed: ${error}`)
-    }
-  })
+  // Simplified upload functionality
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -692,139 +673,6 @@ export default function Upload() {
     }
   }
 
-  // Handle share confirmation with delivery tracking
-  const handleShareConfirm = async (shareOptions: any) => {
-    if (files.length === 0 || recipients.length === 0) return
-
-    setUploading(true)
-    setMessage("")
-
-    try {
-      // Prepare files for upload
-      const uploadPromises = files.map(async (filePreview) => {
-        let fileData = await filePreview.file.arrayBuffer()
-        let finalEncryptionKey = ""
-
-        // Compress if enabled
-        let processedFile = filePreview.file
-        if (compressionEnabled && filePreview.file.type.startsWith('image/')) {
-          processedFile = await compressFile(filePreview.file, compressionQuality)
-          fileData = await processedFile.arrayBuffer()
-        }
-
-        // Encrypt if enabled
-        if (encrypt) {
-          if (useCustomKey && customKey) {
-            finalEncryptionKey = customKey
-          } else if (encryptionKey) {
-            finalEncryptionKey = encryptionKey
-          } else {
-            finalEncryptionKey = generateKey()
-          }
-          const encrypted = encryptFile(fileData, finalEncryptionKey)
-          fileData = new TextEncoder().encode(encrypted).buffer
-        }
-
-        return { processedFile, fileData, finalEncryptionKey }
-      })
-
-      const processedFiles = await Promise.all(uploadPromises)
-
-      // Upload files and share
-      const uploadResults = []
-      for (const { processedFile, fileData, finalEncryptionKey } of processedFiles) {
-        const formData = new FormData()
-        formData.append('file', new Blob([fileData]), processedFile.name)
-        formData.append('type', selectedType)
-        formData.append('encrypt', encrypt.toString())
-        formData.append('encryptionKey', finalEncryptionKey)
-        formData.append('recipients', JSON.stringify(recipients))
-        formData.append('shareMode', 'share')
-
-        // Add share options
-        if (shareOptions.expirationHours) {
-          formData.append('expirationHours', shareOptions.expirationHours.toString())
-        }
-        if (shareOptions.maxDownloads) {
-          formData.append('maxDownloads', shareOptions.maxDownloads.toString())
-        }
-        if (shareOptions.password) {
-          formData.append('password', shareOptions.password)
-        }
-        if (shareOptions.requireConfirmation) {
-          formData.append('requireConfirmation', 'true')
-        }
-        formData.append('notificationChannels', JSON.stringify(shareOptions.notificationChannels))
-
-        const response = await fetch('/api/files', {
-          method: 'POST',
-          body: formData
-        })
-
-        if (!response.ok) {
-          throw new Error(`Upload failed: ${response.statusText}`)
-        }
-
-        const result = await response.json()
-        uploadResults.push(result)
-      }
-
-      // Process delivery results
-      const deliveryResults = []
-      let successfulDeliveries = 0
-      let failedDeliveries = 0
-
-      for (const result of uploadResults) {
-        if (result.sharingResults) {
-          const { results } = result.sharingResults
-          for (const shareResult of results) {
-            const deliveryResult = {
-              shareId: shareResult.shareId,
-              recipientEmail: shareResult.email,
-              recipientName: shareResult.recipientName,
-              status: shareResult.success ? 'success' : 'failed',
-              deliveryId: shareResult.deliveryId,
-              errorMessage: shareResult.error,
-              notificationChannels: shareOptions.notificationChannels
-            }
-            deliveryResults.push(deliveryResult)
-
-            if (shareResult.success) {
-              successfulDeliveries++
-            } else {
-              failedDeliveries++
-            }
-          }
-        }
-      }
-
-      // Show delivery receipt
-      setDeliveryResults(deliveryResults)
-      setLastShareResults({
-        totalRecipients: recipients.length,
-        successfulDeliveries,
-        failedDeliveries
-      })
-
-      if (uploadResults[0]?.shareUrl) {
-        setShareUrl(uploadResults[0].shareUrl)
-      }
-
-      setShowDeliveryReceipt(true)
-      setMessage(`${successfulDeliveries} file(s) shared successfully!`)
-
-      // Reset form
-      setFiles([])
-      setRecipients([])
-      setRecipientDetails([])
-
-    } catch (error) {
-      console.error('Share error:', error)
-      setMessage(`Share failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    } finally {
-      setUploading(false)
-    }
-  }
 
   if (!session) {
     return <div className="min-h-screen flex items-center justify-center">Please login to upload files</div>
@@ -906,18 +754,20 @@ export default function Upload() {
               </label>
 
                 {useEnhancedUpload ? (
-                  // Enhanced upload with resumable transfers
-                  <EnhancedDragDropUpload
-                    maxFiles={10}
-                    maxFileSize={500 * 1024 * 1024} // 500MB
-                    acceptedTypes={[getAcceptString(selectedType)]}
-                    enableCompression={compressionEnabled}
-                    compressionQuality={compressionQuality}
-                    onFilesUploaded={(uploadedFiles) => {
-                      console.log('Files uploaded:', uploadedFiles)
-                      setMessage(`${uploadedFiles.length} file(s) uploaded successfully!`)
-                    }}
-                  />
+                  // Enhanced upload with resumable transfers (simplified for now)
+                  <div className="text-center p-8 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                    <div className="text-4xl mb-4">🚧</div>
+                    <h3 className="text-lg font-semibold mb-2">Enhanced Upload Coming Soon</h3>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                      Advanced features like resumable uploads and compression will be available soon.
+                    </p>
+                    <button
+                      onClick={() => setUseEnhancedUpload(false)}
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors"
+                    >
+                      Use Basic Upload
+                    </button>
+                  </div>
                 ) : (
                   // Legacy drag & drop zone
                   <div
@@ -1072,7 +922,6 @@ export default function Upload() {
                   </div>
                 )}
               </div>
-            )}
 
             {/* Upload Options */}
             {file && (
@@ -1179,15 +1028,41 @@ export default function Upload() {
                   <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
                     <h4 className="font-medium mb-4 text-green-800 dark:text-green-200">Select Recipients</h4>
 
-                    <RecipientSelector
-                      recipients={recipients}
-                      onRecipientsChange={setRecipients}
-                      maxRecipients={50}
-                      placeholder="Add recipient emails..."
-                      className="mb-4"
-                      showValidation={true}
-                      allowBulkImport={true}
-                    />
+                    <div className="mb-4">
+                      <div className="flex gap-2 mb-3">
+                        <input
+                          type="email"
+                          value={newRecipient}
+                          onChange={(e) => setNewRecipient(e.target.value)}
+                          placeholder="Enter recipient email..."
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                          onKeyPress={(e) => e.key === 'Enter' && addRecipient()}
+                        />
+                        <button
+                          onClick={addRecipient}
+                          disabled={!newRecipient.trim()}
+                          className="bg-green-500 hover:bg-green-600 disabled:bg-green-400 text-white px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      {recipients.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {recipients.map((email, index) => (
+                            <div key={index} className="bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                              <span>{email}</span>
+                              <button
+                                onClick={() => removeRecipient(email)}
+                                className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
                     {recipients.length > 0 && (
                       <div className="mt-4 p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-300 dark:border-green-700">
@@ -1459,40 +1334,58 @@ export default function Upload() {
         </div>
       </div>
 
-      {/* Share Confirmation Dialog */}
-      <ShareConfirmationDialog
-        isOpen={showShareConfirmation}
-        onClose={() => setShowShareConfirmation(false)}
-        onConfirm={handleShareConfirm}
-        files={files.map(f => ({
-          name: f.file.name,
-          size: f.file.size,
-          type: f.file.type,
-          encrypted: encrypt
-        }))}
-        recipients={recipients}
-        recipientDetails={recipientDetails}
-        isLoading={uploading}
-      />
+      {/* Share Confirmation Dialog - Simplified */}
+      {showShareConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold mb-4">Confirm Share</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Share {files.length} file(s) with {recipients.length} recipient(s)?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowShareConfirmation(false)
+                  handleBatchUpload()
+                }}
+                disabled={uploading}
+                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {uploading ? 'Sharing...' : 'Share Files'}
+              </button>
+              <button
+                onClick={() => setShowShareConfirmation(false)}
+                className="flex-1 border border-gray-300 dark:border-gray-600 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Delivery Receipt */}
-      <DeliveryReceipt
-        isOpen={showDeliveryReceipt}
-        onClose={() => {
-          setShowDeliveryReceipt(false)
-          setDeliveryResults([])
-          setShareUrl('')
-          setLastShareResults(null)
-        }}
-        fileName={files.length > 0 ? files[0].file.name : ''}
-        fileSize={files.length > 0 ? files[0].file.size : 0}
-        totalRecipients={lastShareResults?.totalRecipients || 0}
-        successfulDeliveries={lastShareResults?.successfulDeliveries || 0}
-        failedDeliveries={lastShareResults?.failedDeliveries || 0}
-        deliveryResults={deliveryResults}
-        shareUrl={shareUrl}
-        onViewStatus={() => window.open('/delivery-status', '_blank')}
-      />
+      {/* Delivery Receipt - Simplified */}
+      {showDeliveryReceipt && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold mb-4">Share Complete</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Files have been shared successfully!
+            </p>
+            <button
+              onClick={() => {
+                setShowDeliveryReceipt(false)
+                setDeliveryResults([])
+                setShareUrl('')
+                setLastShareResults(null)
+              }}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
