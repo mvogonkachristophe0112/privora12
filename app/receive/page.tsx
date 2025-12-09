@@ -252,8 +252,28 @@ export default function Receive() {
     if (type.includes('image')) return '🖼️'
     if (type.includes('video')) return '🎥'
     if (type.includes('audio')) return '🎵'
-    if (type.includes('word') || type.includes('document')) return '📝'
+    if (isDocumentType(type)) return '📝'
     return '📄'
+  }
+
+  // Helper function to properly detect document types
+  const isDocumentType = (type: string) => {
+    const documentTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'text/csv',
+      'application/rtf',
+      'application/vnd.oasis.opendocument.text',
+      'application/vnd.oasis.opendocument.spreadsheet',
+      'application/vnd.oasis.opendocument.presentation'
+    ]
+    return documentTypes.some(docType => type.includes(docType.split('/')[1]) || type === docType)
   }
 
   // Memoized user presence function for better performance
@@ -769,10 +789,10 @@ export default function Receive() {
         const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                               file.senderEmail.toLowerCase().includes(searchQuery.toLowerCase())
         const matchesType = filterType === "all" ||
-                             (filterType === "encrypted" && file.encrypted) ||
-                             (filterType === "documents" && file.type.includes("document")) ||
-                             (filterType === "images" && file.type.includes("image")) ||
-                             (filterType === "videos" && file.type.includes("video"))
+                              (filterType === "encrypted" && file.encrypted) ||
+                              (filterType === "documents" && isDocumentType(file.type)) ||
+                              (filterType === "images" && file.type.includes("image")) ||
+                              (filterType === "videos" && file.type.includes("video"))
 
         // Date range filtering
         const fileDate = new Date(file.sharedAt)

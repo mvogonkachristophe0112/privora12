@@ -4,6 +4,9 @@ import { useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import { usePresence } from "@/lib/presence-context"
+import { useUserDetection } from "@/lib/useUserDetection"
+import { useToast } from "@/components/Toast"
+import ShareButton from "@/components/ShareButton"
 
 interface User {
   id: string
@@ -31,79 +34,14 @@ interface Connection {
 }
 
 export default function Connections() {
-   const { data: session } = useSession()
-   const router = useRouter()
-   const { userPresence } = usePresence()
+    const { data: session } = useSession()
+    const router = useRouter()
+    const { userPresence } = usePresence()
+    const { users, newUsers, clearNewUsers, getUserPresence: getUserPresenceFromHook } = useUserDetection()
+    const { addToast } = useToast()
 
-   // Helper function to get user presence status
-   const getUserPresence = (email: string) => {
-     const presence = userPresence[email]
-     if (presence?.isOnline) {
-       return {
-         status: 'online',
-         text: 'Online',
-         color: 'text-green-600',
-         dotColor: 'bg-green-500',
-         deviceType: presence.deviceType,
-         lastSeen: presence.lastSeen
-       }
-     } else if (presence) {
-       const lastSeen = new Date(presence.lastSeen)
-       const now = new Date()
-       const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
-
-       if (diffMinutes < 1) {
-         return {
-           status: 'away',
-           text: 'Last seen just now',
-           color: 'text-gray-500',
-           dotColor: 'bg-gray-400',
-           deviceType: presence.deviceType,
-           lastSeen: presence.lastSeen
-         }
-       }
-       if (diffMinutes < 60) {
-         return {
-           status: 'away',
-           text: `Last seen ${diffMinutes}m ago`,
-           color: 'text-gray-500',
-           dotColor: 'bg-gray-400',
-           deviceType: presence.deviceType,
-           lastSeen: presence.lastSeen
-         }
-       }
-
-       const diffHours = Math.floor(diffMinutes / 60)
-       if (diffHours < 24) {
-         return {
-           status: 'away',
-           text: `Last seen ${diffHours}h ago`,
-           color: 'text-gray-500',
-           dotColor: 'bg-gray-400',
-           deviceType: presence.deviceType,
-           lastSeen: presence.lastSeen
-         }
-       }
-
-       return {
-         status: 'offline',
-         text: `Last seen ${lastSeen.toLocaleDateString()}`,
-         color: 'text-gray-400',
-         dotColor: 'bg-gray-300',
-         deviceType: presence.deviceType,
-         lastSeen: presence.lastSeen
-       }
-     }
-     return {
-       status: 'offline',
-       text: 'Offline',
-       color: 'text-gray-400',
-       dotColor: 'bg-gray-300',
-       deviceType: 'desktop' as const,
-       lastSeen: new Date()
-     }
-   }
-  const [users, setUsers] = useState<User[]>([])
+   // Use presence from the hook
+   const getUserPresence = getUserPresenceFromHook
   const [connections, setConnections] = useState<Connection[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -113,58 +51,30 @@ export default function Connections() {
 
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchConnections = async () => {
       if (!session) return
 
       try {
         setLoading(true)
         setError(null)
 
-        // Fetch users and connections in parallel
-        const [usersResponse, connectionsResponse] = await Promise.all([
-          fetch('/api/users'),
-          fetch('/api/connections'),
-        ])
-
-        if (!usersResponse.ok || !connectionsResponse.ok) {
-          throw new Error('Failed to fetch data')
+        const connectionsResponse = await fetch('/api/connections')
+        if (!connectionsResponse.ok) {
+          throw new Error('Failed to fetch connections')
         }
 
-        const [usersData, connectionsData] = await Promise.all([
-          usersResponse.json(),
-          connectionsResponse.json(),
-        ])
-
-        setUsers(usersData)
+        const connectionsData = await connectionsResponse.json()
         setConnections(connectionsData)
 
-        // Filter pending connection requests
-
       } catch (err) {
-        console.error('Error fetching data:', err)
-        setError(`Failed to fetch data: ${err instanceof Error ? err.message : 'Unknown error'}`)
+        console.error('Error fetching connections:', err)
+        setError(`Failed to fetch connections: ${err instanceof Error ? err.message : 'Unknown error'}`)
       } finally {
         setLoading(false)
       }
     }
 
-    fetchData()
-
-    // Set up periodic refresh to detect new users who sign in
-    const refreshInterval = setInterval(() => {
-      if (session) {
-        fetch('/api/users')
-          .then(response => response.ok ? response.json() : [])
-          .then(usersData => {
-            setUsers(usersData)
-          })
-          .catch(error => {
-            console.error('Error refreshing users:', error)
-          })
-      }
-    }, 10000) // Refresh every 10 seconds to catch new sign-ins
-
-    return () => clearInterval(refreshInterval)
+    fetchConnections()
   }, [session])
 
   const toggleUserSelection = (userId: string) => {
@@ -255,6 +165,35 @@ export default function Connections() {
     <div className="min-h-screen bg-background text-foreground">
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
+
+          {/* New Users Notification Banner */}
+          {newUsers.length > 0 && (
+            <div className="mb-6 bg-gradient-to-r from-blue-500 to-purple-500 text-white p-4 rounded-xl shadow-lg animate-pulse">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="text-2xl">👋</div>
+                  <div>
+                    <h3 className="font-semibold text-lg">
+                      {newUsers.length} new user{newUsers.length > 1 ? 's' : ''} joined!
+                    </h3>
+                    <p className="text-sm opacity-90">
+                      {newUsers.map(u => u.name || u.email.split('@')[0]).join(', ')} {newUsers.length === 1 ? 'is' : 'are'} now available for file sharing
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={clearNewUsers}
+                  className="bg-white/20 hover:bg-white/30 rounded-full p-2 transition-colors touch-manipulation"
+                  aria-label="Dismiss notification"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
             <div>
               <h1 className="text-2xl md:text-3xl font-bold">User Directory</h1>
@@ -406,17 +345,15 @@ export default function Connections() {
                   {/* Action buttons - all users are automatically visible */}
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          // Direct file sharing without connection request
+                      <ShareButton
+                        variant="primary"
+                        size="sm"
+                        className="w-full"
+                        onShare={() => {
                           toggleUserSelection(user.id)
                           setActionMode("send")
                         }}
-                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg transition-colors text-sm font-medium touch-manipulation"
-                      >
-                        Share Files
-                      </button>
+                      />
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
