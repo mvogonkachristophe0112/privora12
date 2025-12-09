@@ -97,52 +97,12 @@ export default function Upload() {
 
   const fileTypes = [
     {
-      id: "documents",
-      name: "Documents",
-      icon: "📄",
-      accept: ".pdf,.doc,.docx,.txt,.rtf,.odt,.xls,.xlsx,.ppt,.pptx",
-      color: "blue",
-      description: "PDF, Word, Excel, PowerPoint files"
-    },
-    {
-      id: "photos",
-      name: "Photos",
-      icon: "🖼️",
-      accept: ".jpg,.jpeg,.png,.gif,.bmp,.tiff,.webp,.svg",
-      color: "green",
-      description: "Images and photos"
-    },
-    {
-      id: "videos",
-      name: "Videos",
-      icon: "🎥",
-      accept: ".mp4,.avi,.mov,.wmv,.flv,.webm,.mkv,.3gp",
-      color: "purple",
-      description: "Video files and movies"
-    },
-    {
-      id: "audio",
-      name: "Audio",
-      icon: "🎵",
-      accept: ".mp3,.wav,.flac,.aac,.ogg,.wma,.m4a",
-      color: "red",
-      description: "Music and audio files"
-    },
-    {
-      id: "archives",
-      name: "Archives",
-      icon: "📦",
-      accept: ".zip,.rar,.7z,.tar,.gz,.bz2",
-      color: "yellow",
-      description: "Compressed files and archives"
-    },
-    {
-      id: "other",
-      name: "Other",
-      icon: "📄",
+      id: "all",
+      name: "All Files",
+      icon: "📁",
       accept: "*",
-      color: "gray",
-      description: "Any other file type"
+      color: "blue",
+      description: "Any file type - documents, images, videos, archives, and more"
     }
   ]
 
@@ -879,25 +839,36 @@ export default function Upload() {
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-8">
             {/* File Type Selection */}
             <div className="mb-8">
-              <label className="block text-lg font-semibold mb-4">What type of file are you uploading?</label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {fileTypes.map((type) => (
-                  <button
-                    key={type.id}
-                    onClick={() => handleTypeSelect(type.id)}
-                    className={`p-4 border-2 rounded-lg transition-all hover:scale-105 ${
-                      selectedType === type.id
-                        ? `border-${type.color}-500 bg-${type.color}-50 dark:bg-${type.color}-900/20`
-                        : "border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500"
-                    }`}
-                  >
-                    <div className="text-center">
-                      <div className="text-3xl mb-2">{type.icon}</div>
-                      <span className="font-medium block">{type.name}</span>
-                      <span className="text-xs text-gray-500 mt-1">{type.description}</span>
-                    </div>
-                  </button>
-                ))}
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 p-6 rounded-xl border border-blue-200 dark:border-blue-800">
+                <div className="text-center">
+                  <div className="text-5xl mb-4">📁</div>
+                  <h3 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                    Upload Any File Type
+                  </h3>
+                  <p className="text-gray-600 dark:text-gray-300 mb-4">
+                    Share documents, images, videos, archives, and any other file type securely
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-2 text-sm">
+                    <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-3 py-1 rounded-full">
+                      📄 Documents
+                    </span>
+                    <span className="bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 px-3 py-1 rounded-full">
+                      🖼️ Images
+                    </span>
+                    <span className="bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-3 py-1 rounded-full">
+                      🎥 Videos
+                    </span>
+                    <span className="bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 px-3 py-1 rounded-full">
+                      🎵 Audio
+                    </span>
+                    <span className="bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 px-3 py-1 rounded-full">
+                      📦 Archives
+                    </span>
+                    <span className="bg-gray-100 dark:bg-gray-900/40 text-gray-800 dark:text-gray-200 px-3 py-1 rounded-full">
+                      ✨ And More
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -929,11 +900,10 @@ export default function Upload() {
             </div>
 
             {/* File Selection */}
-            {selectedType && (
-              <div className="mb-8">
-                <label className="block text-lg font-semibold mb-4">
-                  Choose Your {fileTypes.find(t => t.id === selectedType)?.name} Files
-                </label>
+            <div className="mb-8">
+              <label className="block text-lg font-semibold mb-4">
+                Choose Your Files
+              </label>
 
                 {useEnhancedUpload ? (
                   // Enhanced upload with resumable transfers
@@ -990,7 +960,7 @@ export default function Upload() {
                         {isDragOver ? "Drop files here!" : "Click to select files or drag and drop"}
                       </p>
                       <p className="text-sm text-gray-500 mb-4">
-                        Supported formats: {fileTypes.find(t => t.id === selectedType)?.accept.replace(/\./g, "").toUpperCase()}
+                        All file types supported - documents, images, videos, archives, and more
                       </p>
                       <p className="text-sm text-gray-500 mb-4">Maximum file size: 500MB per file</p>
 

@@ -6,11 +6,14 @@ import { usePresence } from "@/lib/presence-context"
 import { useNotifications } from "@/lib/notification-context"
 import { useDownloadManager } from "@/components/DownloadManager"
 import DownloadQueue from "@/components/DownloadQueue"
-import { deliveryTracker } from "@/lib/delivery-tracker"
-import DeliveryStatusDashboard from "@/components/DeliveryStatusDashboard"
 import SwipeableFileCard from "@/components/SwipeableFileCard"
 import { ToastProvider, useToast } from "@/components/Toast"
 import ConnectionStatus from "@/components/ConnectionStatus"
+import VirtualizedFileList from "@/components/VirtualizedFileList"
+import { Loading } from "@/components/Loading"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { deliveryTracker } from "@/lib/delivery-tracker"
+import DeliveryStatusDashboard from "@/components/DeliveryStatusDashboard"
 import LazyImage from "@/components/LazyImage"
 
 interface ReceivedFile {
@@ -30,7 +33,7 @@ interface ReceivedFile {
   expiresAt?: string
 }
 
-export default function Receive() {
+function ReceiveContent() {
     const { data: session } = useSession()
     const { isConnected, userPresence, socket } = usePresence()
     const { incrementNewFiles, clearNewFiles } = useNotifications()
@@ -1701,5 +1704,15 @@ export default function Receive() {
       {/* Download Queue */}
       <DownloadQueue />
     </div>
+  )
+}
+
+export default function Receive() {
+  return (
+    <ErrorBoundary>
+      <ToastProvider>
+        <ReceiveContent />
+      </ToastProvider>
+    </ErrorBoundary>
   )
 }
