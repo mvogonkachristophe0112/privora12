@@ -9,7 +9,7 @@ import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
 import { sendFileShareNotification, sendBulkShareNotification } from "@/lib/email"
 import { deliveryTracker } from "@/lib/delivery-tracker"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
@@ -18,12 +18,110 @@ export async function GET() {
     }
 
     const prisma = await getPrismaClient()
-    const files = await prisma.file.findMany({
-      where: { userId: session.user.id },
-      orderBy: { createdAt: 'desc' }
+    const { searchParams } = new URL(request.url)
+
+    // Parse query parameters
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '50')
+    const includeShares = searchParams.get('includeShares') === 'true'
+    const includeStats = searchParams.get('includeStats') === 'true'
+
+    const skip = (page - 1) * limit
+
+    // Build query
+    const where = { userId: session.user.id }
+    const orderBy = { createdAt: 'desc' as const }
+
+    // Get files with optional includes
+    const filesQuery = prisma.file.findMany({
+      where,
+      orderBy,
+      skip,
+      take: limit,
+      include: includeShares ? {
+        shares: {
+          where: { revoked: false },
+          select: {
+            id: true,
+            sharedWithEmail: true,
+            permissions: true,
+            expiresAt: true,
+            status: true,
+            recipient: {
+              select: {
+                name: true,
+                email: true
+              }
+            }
+          }
+        }
+      } : undefined
     })
 
-    return NextResponse.json(files)
+    // Get total count for pagination
+    const totalQuery = prisma.file.count({ where })
+
+    // Execute queries
+    const [files, total] = await Promise.all([filesQuery, totalQuery])
+
+    // Calculate stats if requested
+    let stats = null
+    if (includeStats) {
+      const [
+        totalFiles,
+        encryptedFiles,
+        sharedFiles,
+        totalSizeResult,
+        recentUploads
+      ] = await Promise.all([
+        prisma.file.count({ where: { userId: session.user.id } }),
+        prisma.file.count({ where: { userId: session.user.id, encrypted: true } }),
+        prisma.fileShare.count({
+          where: {
+            file: { userId: session.user.id },
+            revoked: false
+          }
+        }),
+        prisma.file.aggregate({
+          where: { userId: session.user.id },
+          _sum: { size: true }
+        }),
+        prisma.file.count({
+          where: {
+            userId: session.user.id,
+            createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+          }
+        })
+      ])
+
+      stats = {
+        totalFiles,
+        totalSize: totalSizeResult._sum.size || 0,
+        encryptedFiles,
+        sharedFiles,
+        recentUploads,
+        storageUsed: totalSizeResult._sum.size || 0,
+        storageLimit: 5 * 1024 * 1024 * 1024 // 5GB default limit
+      }
+    }
+
+    // Transform files to include computed fields
+    const transformedFiles = files.map((file: any) => ({
+      ...file,
+      downloadCount: 0, // Would need to implement download tracking
+      viewCount: 0, // Would need to implement view tracking
+      shareCount: file.shares?.length || 0,
+      lastAccessed: file.updatedAt // Using updatedAt as proxy
+    }))
+
+    return NextResponse.json({
+      files: transformedFiles,
+      total,
+      page,
+      limit,
+      hasMore: skip + files.length < total,
+      stats
+    })
   } catch (error) {
     console.error('GET /api/files error:', error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

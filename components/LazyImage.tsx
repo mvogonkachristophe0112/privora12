@@ -83,21 +83,11 @@ export default function LazyImage({
     onError?.()
   }
 
-  const handleImageLoad = () => {
-    if (isInView) {
-      setIsLoading(true)
-      const img = new Image()
-      img.onload = handleLoad
-      img.onerror = handleError
-      img.src = src
-    }
-  }
-
   useEffect(() => {
     if (isInView && !isLoaded && !hasError) {
-      handleImageLoad()
+      setIsLoading(true)
     }
-  }, [isInView, isLoaded, hasError, src])
+  }, [isInView, isLoaded, hasError])
 
   return (
     <div className={`relative ${className}`}>
