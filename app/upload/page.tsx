@@ -5,6 +5,10 @@ import { useSession } from "next-auth/react"
 import { encryptFile, generateKey } from "@/lib/crypto"
 import EnhancedDragDropUpload from "@/components/EnhancedDragDropUpload"
 import { useResumableUpload } from "@/lib/useResumableUpload"
+import RecipientSelector from "@/components/RecipientSelector"
+import ShareConfirmationDialog from "@/components/ShareConfirmationDialog"
+import DeliveryReceipt from "@/components/DeliveryReceipt"
+import { deliveryTracker } from "@/lib/delivery-tracker"
 
 interface FilePreview {
   file: File
@@ -59,6 +63,14 @@ export default function Upload() {
 
   // Enhanced upload features
   const [useEnhancedUpload, setUseEnhancedUpload] = useState(true)
+
+  // Recipient selection and sharing states
+  const [recipientDetails, setRecipientDetails] = useState<any[]>([])
+  const [showShareConfirmation, setShowShareConfirmation] = useState(false)
+  const [showDeliveryReceipt, setShowDeliveryReceipt] = useState(false)
+  const [deliveryResults, setDeliveryResults] = useState<any[]>([])
+  const [shareUrl, setShareUrl] = useState<string>('')
+  const [lastShareResults, setLastShareResults] = useState<any>(null)
 
   // Resumable upload hook
   const resumableUpload = useResumableUpload({
@@ -720,6 +732,140 @@ export default function Upload() {
     }
   }
 
+  // Handle share confirmation with delivery tracking
+  const handleShareConfirm = async (shareOptions: any) => {
+    if (files.length === 0 || recipients.length === 0) return
+
+    setUploading(true)
+    setMessage("")
+
+    try {
+      // Prepare files for upload
+      const uploadPromises = files.map(async (filePreview) => {
+        let fileData = await filePreview.file.arrayBuffer()
+        let finalEncryptionKey = ""
+
+        // Compress if enabled
+        let processedFile = filePreview.file
+        if (compressionEnabled && filePreview.file.type.startsWith('image/')) {
+          processedFile = await compressFile(filePreview.file, compressionQuality)
+          fileData = await processedFile.arrayBuffer()
+        }
+
+        // Encrypt if enabled
+        if (encrypt) {
+          if (useCustomKey && customKey) {
+            finalEncryptionKey = customKey
+          } else if (encryptionKey) {
+            finalEncryptionKey = encryptionKey
+          } else {
+            finalEncryptionKey = generateKey()
+          }
+          const encrypted = encryptFile(fileData, finalEncryptionKey)
+          fileData = new TextEncoder().encode(encrypted).buffer
+        }
+
+        return { processedFile, fileData, finalEncryptionKey }
+      })
+
+      const processedFiles = await Promise.all(uploadPromises)
+
+      // Upload files and share
+      const uploadResults = []
+      for (const { processedFile, fileData, finalEncryptionKey } of processedFiles) {
+        const formData = new FormData()
+        formData.append('file', new Blob([fileData]), processedFile.name)
+        formData.append('type', selectedType)
+        formData.append('encrypt', encrypt.toString())
+        formData.append('encryptionKey', finalEncryptionKey)
+        formData.append('recipients', JSON.stringify(recipients))
+        formData.append('shareMode', 'share')
+
+        // Add share options
+        if (shareOptions.expirationHours) {
+          formData.append('expirationHours', shareOptions.expirationHours.toString())
+        }
+        if (shareOptions.maxDownloads) {
+          formData.append('maxDownloads', shareOptions.maxDownloads.toString())
+        }
+        if (shareOptions.password) {
+          formData.append('password', shareOptions.password)
+        }
+        if (shareOptions.requireConfirmation) {
+          formData.append('requireConfirmation', 'true')
+        }
+        formData.append('notificationChannels', JSON.stringify(shareOptions.notificationChannels))
+
+        const response = await fetch('/api/files', {
+          method: 'POST',
+          body: formData
+        })
+
+        if (!response.ok) {
+          throw new Error(`Upload failed: ${response.statusText}`)
+        }
+
+        const result = await response.json()
+        uploadResults.push(result)
+      }
+
+      // Process delivery results
+      const deliveryResults = []
+      let successfulDeliveries = 0
+      let failedDeliveries = 0
+
+      for (const result of uploadResults) {
+        if (result.sharingResults) {
+          const { results } = result.sharingResults
+          for (const shareResult of results) {
+            const deliveryResult = {
+              shareId: shareResult.shareId,
+              recipientEmail: shareResult.email,
+              recipientName: shareResult.recipientName,
+              status: shareResult.success ? 'success' : 'failed',
+              deliveryId: shareResult.deliveryId,
+              errorMessage: shareResult.error,
+              notificationChannels: shareOptions.notificationChannels
+            }
+            deliveryResults.push(deliveryResult)
+
+            if (shareResult.success) {
+              successfulDeliveries++
+            } else {
+              failedDeliveries++
+            }
+          }
+        }
+      }
+
+      // Show delivery receipt
+      setDeliveryResults(deliveryResults)
+      setLastShareResults({
+        totalRecipients: recipients.length,
+        successfulDeliveries,
+        failedDeliveries
+      })
+
+      if (uploadResults[0]?.shareUrl) {
+        setShareUrl(uploadResults[0].shareUrl)
+      }
+
+      setShowDeliveryReceipt(true)
+      setMessage(`${successfulDeliveries} file(s) shared successfully!`)
+
+      // Reset form
+      setFiles([])
+      setRecipients([])
+      setRecipientDetails([])
+
+    } catch (error) {
+      console.error('Share error:', error)
+      setMessage(`Share failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setUploading(false)
+    }
+  }
+
   if (!session) {
     return <div className="min-h-screen flex items-center justify-center">Please login to upload files</div>
   }
@@ -1061,47 +1207,30 @@ export default function Upload() {
                 {/* Recipient Selection - Only show in share mode */}
                 {shareMode === "share" && (
                   <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                    <h4 className="font-medium mb-3 text-green-800 dark:text-green-200">Select Recipients</h4>
+                    <h4 className="font-medium mb-4 text-green-800 dark:text-green-200">Select Recipients</h4>
 
-                    <div className="space-y-3">
-                      <div className="flex gap-2">
-                        <input
-                          type="email"
-                          value={newRecipient}
-                          onChange={(e) => setNewRecipient(e.target.value)}
-                          placeholder="Enter recipient email"
-                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700"
-                        />
-                        <button
-                          onClick={addRecipient}
-                          disabled={!newRecipient.trim()}
-                          className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg transition-colors"
-                        >
-                          Add
-                        </button>
-                      </div>
+                    <RecipientSelector
+                      recipients={recipients}
+                      onRecipientsChange={setRecipients}
+                      maxRecipients={50}
+                      placeholder="Add recipient emails..."
+                      className="mb-4"
+                      showValidation={true}
+                      allowBulkImport={true}
+                    />
 
-                      {recipients.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Recipients:</p>
-                          {recipients.map((email, index) => (
-                            <div key={index} className="flex items-center justify-between bg-white dark:bg-gray-700 p-2 rounded border">
-                              <span className="text-sm">{email}</span>
-                              <button
-                                onClick={() => removeRecipient(email)}
-                                className="text-red-500 hover:text-red-700 ml-2"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
+                    {recipients.length > 0 && (
+                      <div className="mt-4 p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-300 dark:border-green-700">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-green-700 dark:text-green-300 font-medium">
+                            ✅ Ready to share with {recipients.length} recipient{recipients.length !== 1 ? 's' : ''}
+                          </span>
                         </div>
-                      )}
-
-                      {recipients.length === 0 && (
-                        <p className="text-sm text-gray-500 italic">No recipients added yet</p>
-                      )}
-                    </div>
+                        <div className="text-xs text-green-600 dark:text-green-400 mt-1">
+                          Recipients will receive secure download links via email
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1334,7 +1463,7 @@ export default function Upload() {
             )}
 
             <button
-              onClick={handleBatchUpload}
+              onClick={shareMode === "share" ? () => setShowShareConfirmation(true) : handleBatchUpload}
               disabled={files.length === 0 || uploading || (shareMode === "share" && recipients.length === 0) || (encrypt && !encryptionKey && !customKey)}
               className="w-full bg-gradient-to-r from-blue-500 to-green-500 hover:from-blue-600 hover:to-green-600 disabled:from-gray-400 disabled:to-gray-500 text-white py-4 rounded-xl font-semibold transition-all duration-300 transform hover:-translate-y-1 disabled:transform-none shadow-lg hover:shadow-xl disabled:shadow-none text-lg touch-manipulation"
             >
@@ -1346,7 +1475,7 @@ export default function Upload() {
               ) : (
                 <div className="flex items-center justify-center gap-2">
                   <span>
-                    {shareMode === "share" ? "Upload & Share" : "Upload"} {files.length > 1 ? `${files.length} Files` : "File"} Securely
+                    {shareMode === "share" ? "Review & Share" : "Upload"} {files.length > 1 ? `${files.length} Files` : "File"} Securely
                   </span>
                   {files.length > 0 && (
                     <span className="text-sm opacity-90">
@@ -1359,6 +1488,41 @@ export default function Upload() {
           </div>
         </div>
       </div>
+
+      {/* Share Confirmation Dialog */}
+      <ShareConfirmationDialog
+        isOpen={showShareConfirmation}
+        onClose={() => setShowShareConfirmation(false)}
+        onConfirm={handleShareConfirm}
+        files={files.map(f => ({
+          name: f.file.name,
+          size: f.file.size,
+          type: f.file.type,
+          encrypted: encrypt
+        }))}
+        recipients={recipients}
+        recipientDetails={recipientDetails}
+        isLoading={uploading}
+      />
+
+      {/* Delivery Receipt */}
+      <DeliveryReceipt
+        isOpen={showDeliveryReceipt}
+        onClose={() => {
+          setShowDeliveryReceipt(false)
+          setDeliveryResults([])
+          setShareUrl('')
+          setLastShareResults(null)
+        }}
+        fileName={files.length > 0 ? files[0].file.name : ''}
+        fileSize={files.length > 0 ? files[0].file.size : 0}
+        totalRecipients={lastShareResults?.totalRecipients || 0}
+        successfulDeliveries={lastShareResults?.successfulDeliveries || 0}
+        failedDeliveries={lastShareResults?.failedDeliveries || 0}
+        deliveryResults={deliveryResults}
+        shareUrl={shareUrl}
+        onViewStatus={() => window.open('/delivery-status', '_blank')}
+      />
     </div>
   )
 }
