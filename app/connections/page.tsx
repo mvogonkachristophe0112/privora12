@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import { usePresence } from "@/lib/presence-context"
 import { useUserDetection } from "@/lib/useUserDetection"
+import { useUserPresence } from "@/lib/presence-context"
 import { useToast } from "@/components/Toast"
 import ShareButton from "@/components/ShareButton"
 
@@ -25,130 +26,17 @@ interface UserPresence {
   user: User
 }
 
-interface Connection {
-  id: string
-  userId: string
-  connectedTo: string
-  status: string
-  user: User
-}
 
 export default function Connections() {
-    const { data: session } = useSession()
-    const router = useRouter()
-    const { userPresence } = usePresence()
-    const { users, newUsers, clearNewUsers } = useUserDetection()
-    const { addToast } = useToast()
-
-    // Helper function to get user presence status
-    const getUserPresence = (email: string): {
-        status: string;
-        text: string;
-        color: string;
-        dotColor: string;
-        deviceType: 'phone' | 'laptop' | 'tablet' | 'desktop';
-        lastSeen: Date;
-    } => {
-        const presence = userPresence[email]
-        if (presence?.isOnline) {
-            return {
-                status: 'online',
-                text: 'Online',
-                color: 'text-green-600',
-                dotColor: 'bg-green-500',
-                deviceType: presence.deviceType,
-                lastSeen: presence.lastSeen
-            }
-        } else if (presence) {
-            const lastSeen = new Date(presence.lastSeen)
-            const now = new Date()
-            const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
-
-            if (diffMinutes < 1) {
-                return {
-                    status: 'away',
-                    text: 'Last seen just now',
-                    color: 'text-gray-500',
-                    dotColor: 'bg-gray-400',
-                    deviceType: presence.deviceType,
-                    lastSeen: presence.lastSeen
-                }
-            }
-            if (diffMinutes < 60) {
-                return {
-                    status: 'away',
-                    text: `Last seen ${diffMinutes}m ago`,
-                    color: 'text-gray-500',
-                    dotColor: 'bg-gray-400',
-                    deviceType: presence.deviceType,
-                    lastSeen: presence.lastSeen
-                }
-            }
-
-            const diffHours = Math.floor(diffMinutes / 60)
-            if (diffHours < 24) {
-                return {
-                    status: 'away',
-                    text: `Last seen ${diffHours}h ago`,
-                    color: 'text-gray-500',
-                    dotColor: 'bg-gray-400',
-                    deviceType: presence.deviceType,
-                    lastSeen: presence.lastSeen
-                }
-            }
-
-            return {
-                status: 'offline',
-                text: `Last seen ${lastSeen.toLocaleDateString()}`,
-                color: 'text-gray-400',
-                dotColor: 'bg-gray-300',
-                deviceType: presence.deviceType,
-                lastSeen: presence.lastSeen
-            }
-        }
-        return {
-            status: 'offline',
-            text: 'Offline',
-            color: 'text-gray-400',
-            dotColor: 'bg-gray-300',
-            deviceType: 'desktop' as const,
-            lastSeen: new Date()
-        }
-    }
-  const [connections, setConnections] = useState<Connection[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+     const { data: session } = useSession()
+     const router = useRouter()
+     const { users, newUsers, clearNewUsers } = useUserDetection()
+     const { addToast } = useToast()
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
   const [actionMode, setActionMode] = useState<"send" | "receive" | null>(null)
 
 
 
-  useEffect(() => {
-    const fetchConnections = async () => {
-      if (!session) return
-
-      try {
-        setLoading(true)
-        setError(null)
-
-        const connectionsResponse = await fetch('/api/connections')
-        if (!connectionsResponse.ok) {
-          throw new Error('Failed to fetch connections')
-        }
-
-        const connectionsData = await connectionsResponse.json()
-        setConnections(connectionsData)
-
-      } catch (err) {
-        console.error('Error fetching connections:', err)
-        setError(`Failed to fetch connections: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchConnections()
-  }, [session])
 
   const toggleUserSelection = (userId: string) => {
     const newSelected = new Set(selectedUsers)
@@ -203,35 +91,6 @@ export default function Connections() {
 
   if (!session) {
     return <div className="min-h-screen flex items-center justify-center">Please login to view connections</div>
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p>Loading connections...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-6xl mb-4">⚠️</div>
-          <h2 className="text-2xl font-semibold mb-4">Error Loading Connections</h2>
-          <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -385,7 +244,7 @@ export default function Connections() {
                         )}
                       </div>
                       {/* Online status indicator */}
-                      <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800 ${getUserPresence(user.email).dotColor}`}></div>
+                      <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-gray-800 ${useUserPresence(user.email).dotColor}`}></div>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
@@ -394,18 +253,18 @@ export default function Connections() {
                         </h3>
                         {/* Device indicator */}
                         <span className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                          {getUserPresence(user.email).deviceType === 'phone' && '📱'}
-                          {getUserPresence(user.email).deviceType === 'laptop' && '💻'}
-                          {getUserPresence(user.email).deviceType === 'tablet' && '📱'}
-                          {getUserPresence(user.email).deviceType === 'desktop' && '🖥️'}
-                          {getUserPresence(user.email).deviceType}
+                          {useUserPresence(user.email).deviceType === 'phone' && '📱'}
+                          {useUserPresence(user.email).deviceType === 'laptop' && '💻'}
+                          {useUserPresence(user.email).deviceType === 'tablet' && '📱'}
+                          {useUserPresence(user.email).deviceType === 'desktop' && '🖥️'}
+                          {useUserPresence(user.email).deviceType}
                         </span>
                       </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400 truncate mb-1">
                         {user.email}
                       </p>
-                      <p className={`text-xs ${getUserPresence(user.email).color}`}>
-                        {getUserPresence(user.email).text}
+                      <p className={`text-xs ${useUserPresence(user.email).color}`}>
+                        {useUserPresence(user.email).text}
                       </p>
                     </div>
                   </div>

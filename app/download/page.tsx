@@ -128,36 +128,74 @@ function DownloadContent() {
       }
 
       // Check if password is required
+      let password = ''
       if (file.password) {
-        const password = prompt('Enter password to download this file:')
+        password = prompt('Enter password to download this file:') || ''
         if (!password) {
           setDownloading(null)
           return
         }
-        // Note: In a real implementation, you'd verify the password on the server
       }
 
-      // Create download URL
-      const downloadUrl = `/api/files/download/${file.fileId}`
+      // Check if decryption key is required for encrypted files
+      let decryptionKey = ''
+      if (file.encrypted) {
+        decryptionKey = prompt('Enter decryption key for this encrypted file:') || ''
+        if (!decryptionKey) {
+          setDownloading(null)
+          return
+        }
+      }
 
-      // For encrypted files, we might need a decryption key
-      const url = file.encrypted
-        ? `${downloadUrl}?key=${encodeURIComponent(prompt('Enter decryption key:') || '')}`
-        : downloadUrl
+      // Create download URL with parameters
+      let downloadUrl = `/api/files/download/${file.fileId}`
+      const params = new URLSearchParams()
 
-      // Create a temporary link and trigger download
+      if (password) {
+        params.append('password', password)
+      }
+
+      if (decryptionKey) {
+        params.append('key', decryptionKey)
+      }
+
+      if (params.toString()) {
+        downloadUrl += `?${params.toString()}`
+      }
+
+      // Fetch the file data
+      const response = await fetch(downloadUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': '*/*',
+        },
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || `Download failed: ${response.status}`)
+      }
+
+      // Get the file data as blob
+      const blob = await response.blob()
+
+      // Create download link with blob
+      const blobUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      link.href = url
+      link.href = blobUrl
       link.download = file.originalName
       link.style.display = 'none'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
 
+      // Clean up the blob URL
+      URL.revokeObjectURL(blobUrl)
+
       addToast({
         type: 'success',
-        title: 'Download started',
-        message: `${file.name} download has been initiated`,
+        title: 'Download completed',
+        message: `${file.name} has been downloaded successfully`,
         duration: 3000
       })
 
@@ -171,7 +209,7 @@ function DownloadContent() {
       addToast({
         type: 'error',
         title: 'Download failed',
-        message: 'Failed to download the file. Please try again.',
+        message: error instanceof Error ? error.message : 'Failed to download the file. Please try again.',
         duration: 5000
       })
     } finally {
