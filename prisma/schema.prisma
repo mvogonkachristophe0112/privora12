@@ -29,6 +29,13 @@ enum ShareStatus {
   EXPIRED
 }
 
+enum DeliveryStatus {
+  PENDING
+  DELIVERED
+  READ
+  FAILED
+}
+
 enum EmailNotificationFrequency {
   IMMEDIATE
   DAILY
@@ -114,6 +121,8 @@ model User {
   downloadLogs  DownloadLog[]
   sentEmails    EmailLog[]
   accessLogs    FileAccessLog[]
+  sentDeliveries FileDelivery[] @relation("DeliverySender")
+  receivedDeliveries FileDelivery[] @relation("DeliveryRecipient")
 }
 
 model VerificationToken {
@@ -138,6 +147,7 @@ model File {
   user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   shares        FileShare[]
   versions      FileVersion[]
+  deliveries    FileDelivery[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 }
@@ -196,6 +206,35 @@ model FileVersion {
   @@unique([fileId, versionNumber])
   @@index([fileId])
   @@index([createdBy])
+}
+
+model FileDelivery {
+  id                String        @id @default(cuid())
+  fileId            String
+  senderId          String
+  recipientId       String
+  recipientEmail    String
+  status            DeliveryStatus @default(PENDING)
+  senderIp          String?
+  recipientIp       String?
+  deliveryAttempts  Int           @default(0)
+  maxDeliveryAttempts Int         @default(3)
+  deliveredAt       DateTime?
+  viewedAt          DateTime?
+  expiresAt         DateTime
+  metadata          String?       // JSON string for additional data
+  file              File          @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  sender            User          @relation("DeliverySender", fields: [senderId], references: [id])
+  recipient         User          @relation("DeliveryRecipient", fields: [recipientId], references: [id])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([fileId])
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([recipientEmail])
+  @@index([status])
+  @@index([expiresAt])
 }
 
 model Group {
