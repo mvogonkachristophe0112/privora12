@@ -7,6 +7,20 @@ import { canPerformAction, recordFileAccess } from "@/lib/permissions"
 import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
 import { logDownloadEvent, DownloadAction } from "@/lib/download-tracking"
 import { logAccessEvent, AccessEventType, AccessResult } from "@/lib/access-tracking"
+import { emitSocketEvent } from "@/lib/socket"
+import {
+  handleApiError,
+  createAuthenticationError,
+  createAuthorizationError,
+  createNotFoundError,
+  createValidationError,
+  createTimeoutError,
+  createStorageError,
+  createEncryptionError,
+  safeDatabaseOperation,
+  safeFileOperation,
+  withRetry
+} from "@/lib/error-handling"
 
 export async function GET(
   request: NextRequest,
@@ -20,7 +34,7 @@ export async function GET(
     const authOptions = await getAuthOptions()
     session = await getServerSession(authOptions)
     if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      throw createAuthenticationError()
     }
 
     const { searchParams } = new URL(request.url)
@@ -34,16 +48,17 @@ export async function GET(
     // Check download permission using the new permission system
     const hasDownloadAccess = await canPerformAction(session.user.id, fileId, 'download')
     if (!hasDownloadAccess) {
-      return NextResponse.json({ error: "Access denied: DOWNLOAD permission required" }, { status: 403 })
+      throw createAuthorizationError("DOWNLOAD permission required")
     }
 
     // Get file details and find the share
-    const file = await prisma.file.findUnique({
-      where: { id: fileId }
-    })
+    const file = await safeDatabaseOperation(
+      () => prisma.file.findUnique({ where: { id: fileId } }),
+      'Find file'
+    ) as any // Type assertion since we know the structure
 
     if (!file) {
-      return NextResponse.json({ error: "File not found" }, { status: 404 })
+      throw createNotFoundError('File')
     }
 
     // Find the active share for this user and file
@@ -60,7 +75,37 @@ export async function GET(
     })
 
     if (!share) {
-      return NextResponse.json({ error: "No active share found for this file" }, { status: 403 })
+      // Check if this is a LAN delivery instead of a regular share
+      const lanDelivery = await prisma.fileDelivery.findFirst({
+        where: {
+          fileId,
+          recipientId: session.user.id,
+          status: { in: ['PENDING', 'DELIVERED'] },
+          expiresAt: { gt: new Date() }
+        },
+        include: {
+          file: true,
+          sender: {
+            select: { id: true, name: true, email: true }
+          }
+        }
+      })
+
+      if (!lanDelivery) {
+        return NextResponse.json({ error: "No active share or delivery found for this file" }, { status: 403 })
+      }
+
+      // Use the LAN delivery instead of share for access control
+      share = {
+        id: lanDelivery.id,
+        fileId: lanDelivery.fileId,
+        sharedWithEmail: session.user.email,
+        permissions: ['VIEW', 'DOWNLOAD'], // LAN deliveries have full access
+        expiresAt: lanDelivery.expiresAt,
+        revoked: false,
+        lanDelivery: true,
+        deliveryRecord: lanDelivery
+      }
     }
 
     // Get client info for logging
@@ -287,6 +332,38 @@ export async function GET(
       }
     })
 
+    // Update LAN delivery status if this was a LAN delivery
+    if (share.lanDelivery && share.deliveryRecord) {
+      try {
+        const updatedDelivery = await prisma.fileDelivery.update({
+          where: { id: share.deliveryRecord.id },
+          data: {
+            status: 'DELIVERED',
+            recipientIp: ipAddress,
+            deliveredAt: new Date(),
+            deliveryAttempts: { increment: 1 },
+            updatedAt: new Date()
+          }
+        })
+
+        // Emit real-time notification for delivery completion
+        emitSocketEvent('lan-delivery-completed', {
+          deliveryId: updatedDelivery.id,
+          fileId: updatedDelivery.fileId,
+          senderId: updatedDelivery.senderId,
+          recipientId: updatedDelivery.recipientId,
+          status: 'delivered',
+          deliveredAt: updatedDelivery.deliveredAt?.toISOString(),
+          recipientIp: ipAddress
+        })
+
+        console.log(`LAN delivery ${updatedDelivery.id} marked as completed`)
+      } catch (deliveryUpdateError) {
+        console.error('Failed to update LAN delivery status:', deliveryUpdateError)
+        // Don't fail the download for delivery status update issues
+      }
+    }
+
     // Return file with appropriate headers
     return new NextResponse(fileData, {
       status: statusCode,
@@ -294,39 +371,47 @@ export async function GET(
     })
 
   } catch (error) {
-    console.error('GET /api/files/download/[id] error:', error)
+    // Handle error with comprehensive error handling
+    const { error: appError, response } = await handleApiError(
+      error,
+      'File download',
+      true
+    )
 
-    // Log download failure
-    try {
-      await logDownloadEvent({
-        shareId: share?.id || 'unknown',
-        userId: session.user.id,
-        fileId,
-        action: DownloadAction.FAIL,
-        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
-        userAgent: request.headers.get('user-agent') || 'unknown',
-        metadata: {
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
-      })
-
-      // Log access event failure
-      if (share?.id) {
-        await logAccessEvent({
-          shareId: share.id,
+    // Log download failure if we have session info
+    if (session?.user?.id) {
+      try {
+        await logDownloadEvent({
+          shareId: share?.id || 'unknown',
           userId: session.user.id,
           fileId,
-          eventType: AccessEventType.DOWNLOAD,
-          result: AccessResult.FAILURE,
-          ipAddress: request.headers.get('x-forwarded-for') || undefined,
-          userAgent: request.headers.get('user-agent') || undefined,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error'
+          action: DownloadAction.FAIL,
+          ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+          userAgent: request.headers.get('user-agent') || 'unknown',
+          metadata: {
+            error: appError.message,
+            errorType: appError.type
+          }
         })
+
+        // Log access event failure
+        if (share?.id) {
+          await logAccessEvent({
+            shareId: share.id,
+            userId: session.user.id,
+            fileId,
+            eventType: AccessEventType.DOWNLOAD,
+            result: AccessResult.FAILURE,
+            ipAddress: request.headers.get('x-forwarded-for') || undefined,
+            userAgent: request.headers.get('user-agent') || undefined,
+            errorMessage: appError.message
+          })
+        }
+      } catch (logError) {
+        console.error('Failed to log download failure:', logError)
       }
-    } catch (logError) {
-      console.error('Failed to log download failure:', logError)
     }
 
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json(response, { status: appError.statusCode })
   }
 }

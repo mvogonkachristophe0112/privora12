@@ -6,6 +6,8 @@ import { encryptFile } from "@/lib/crypto"
 import { emitSocketEvent } from "@/lib/socket"
 import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
 import { deliveryTracker } from "@/lib/delivery-tracker"
+import { PathSanitizer, InputValidator, ContentSecurity, RateLimiter } from "@/lib/security"
+import { createValidationError, createQuotaExceededError, handleApiError } from "@/lib/error-handling"
 import fs from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
@@ -48,7 +50,7 @@ export async function GET(request: NextRequest) {
             permissions: true,
             expiresAt: true,
             status: true,
-            recipient: {
+            user: {
               select: {
                 name: true,
                 email: true
@@ -131,10 +133,13 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting check
+    RateLimiter.createMiddleware()(request)
+
     const authOptions = await getAuthOptions()
     const session = await getServerSession(authOptions)
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      throw createValidationError("Unauthorized")
     }
 
     let prisma
@@ -142,10 +147,7 @@ export async function POST(request: NextRequest) {
       prisma = await getPrismaClient()
     } catch (dbError) {
       console.error('Database connection failed:', dbError)
-      return NextResponse.json({
-        error: "Database connection failed",
-        details: "Unable to connect to database. Please try again later."
-      }, { status: 503 })
+      throw createValidationError("Database connection failed. Please try again later.")
     }
 
     let formData
@@ -153,16 +155,22 @@ export async function POST(request: NextRequest) {
       formData = await request.formData()
     } catch (formError) {
       console.error('Failed to parse form data:', formError)
-      return NextResponse.json({
-        error: "Invalid form data",
-        details: "Unable to process the uploaded file data."
-      }, { status: 400 })
+      throw createValidationError("Invalid form data: Unable to process the uploaded file data.")
     }
 
     const file = formData.get('file') as File
     const encrypt = formData.get('encrypt') === 'true'
     const encryptionKey = formData.get('encryptionKey') as string
     const type = formData.get('type') as string
+
+    // Validate file upload security
+    if (file) {
+      await ContentSecurity.validateFileUpload(file, ['image/*', 'video/*', 'audio/*', 'application/*'], 500 * 1024 * 1024) // 500MB limit
+    }
+
+    // Sanitize and validate inputs
+    const sanitizedType = InputValidator.sanitizeString(type, 100)
+    const sanitizedEncryptionKey = encryptionKey ? InputValidator.sanitizeString(encryptionKey, 1000) : ""
 
     // Enhanced sharing parameters
     let recipients = []
@@ -248,6 +256,7 @@ export async function POST(request: NextRequest) {
     }
 
     const shareMode = formData.get('shareMode') as string
+    const deliveryMode = formData.get('deliveryMode') as string // New parameter for LAN delivery
 
     console.log('=== UPLOAD REQUEST START ===')
     console.log('File provided:', !!file)
@@ -257,6 +266,7 @@ export async function POST(request: NextRequest) {
     console.log('Parsed recipients:', recipients)
     console.log('Recipients length:', recipients.length)
     console.log('Share mode:', shareMode)
+    console.log('Delivery mode:', deliveryMode)
     console.log('Encrypt:', encrypt)
     console.log('Encryption key provided:', !!encryptionKey)
     console.log('Session user email:', session.user.email)
@@ -297,21 +307,27 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('Starting local file storage...')
-    // Generate unique filename for local storage
+    // Generate secure unique filename for local storage
     const uniqueId = crypto.randomUUID()
-    const localFileName = `${uniqueId}-${finalFileName}`
+    const sanitizedFileName = PathSanitizer.sanitizeFilename(finalFileName)
+    const secureFileName = PathSanitizer.generateSecureFilename(sanitizedFileName, 'upload')
     const uploadDir = path.resolve(process.cwd(), 'storage', 'uploads')
 
-    // Ensure upload directory exists
-    await fs.mkdir(uploadDir, { recursive: true })
+    // Sanitize upload directory path
+    const sanitizedUploadDir = PathSanitizer.sanitizeFilePath(uploadDir, process.cwd())
 
-    // Write file to local storage
-    const filePath = path.join(uploadDir, localFileName)
-    await fs.writeFile(filePath, Buffer.from(fileData))
-    console.log('Local file storage successful, path:', filePath)
+    // Ensure upload directory exists with proper permissions
+    await fs.mkdir(sanitizedUploadDir, { recursive: true, mode: 0o755 })
+
+    // Write file to local storage with security checks
+    const filePath = path.join(sanitizedUploadDir, secureFileName)
+    const sanitizedFilePath = PathSanitizer.sanitizeFilePath(filePath, sanitizedUploadDir)
+
+    await fs.writeFile(sanitizedFilePath, Buffer.from(fileData))
+    console.log('Local file storage successful, path:', sanitizedFilePath)
 
     // Create local URL for file access
-    const localUrl = `/api/files/download/${localFileName}`
+    const localUrl = `/api/files/download/local/${secureFileName}`
 
     console.log('Saving to database...')
     const maxRetries = 3
@@ -497,6 +513,90 @@ export async function POST(request: NextRequest) {
       console.log('=== ENHANCED SHARING LOGIC END ===')
     }
 
+    // Handle LAN delivery mode - direct file delivery to specific recipients
+    if (deliveryMode === 'lan' && recipients.length > 0) {
+      console.log('=== LAN DELIVERY MODE START ===')
+      console.log('Recipients for LAN delivery:', recipients.length)
+
+      // Get client IP address for tracking
+      const clientIP = request.headers.get('x-forwarded-for') ||
+                      request.headers.get('x-real-ip') ||
+                      '127.0.0.1'
+
+      // Process LAN deliveries
+      const deliveryResults = await processLanDeliveries(
+        prisma,
+        newFile.id,
+        session.user.id,
+        session.user.email,
+        recipients,
+        clientIP
+      )
+
+      // Track delivery status for each successful delivery
+      const successfulDeliveries = deliveryResults.filter(r => r.success)
+      if (successfulDeliveries.length > 0) {
+        for (const result of successfulDeliveries) {
+          try {
+            // Create delivery tracking record
+            const deliveryRecord = await prisma.fileDelivery.create({
+              data: {
+                fileId: newFile.id,
+                senderId: session.user.id,
+                recipientId: result.recipientUser.id,
+                status: 'PENDING',
+                senderIp: clientIP,
+                recipientIp: null, // Will be updated when recipient downloads
+                deliveryAttempts: 0,
+                maxDeliveryAttempts: 3,
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            })
+
+            console.log(`📦 LAN delivery record created for ${result.email}: ${deliveryRecord.id}`)
+
+            // Emit real-time notification for LAN delivery
+            emitSocketEvent('lan-file-delivery', {
+              fileId: newFile.id,
+              fileName: newFile.name,
+              senderEmail: session.user.email,
+              senderId: session.user.id,
+              receiverEmail: result.email,
+              receiverId: result.recipientUser.id,
+              deliveryId: deliveryRecord.id,
+              status: 'pending',
+              deliveredAt: new Date().toISOString(),
+              deliveryType: 'lan'
+            })
+
+          } catch (deliveryError) {
+            console.error(`Failed to create delivery record for ${result.email}:`, deliveryError)
+          }
+        }
+      }
+
+      // Audit logging for LAN delivery
+      await logAuditEvent({
+        userId: session.user.id,
+        action: AuditAction.FILE_SHARE,
+        resource: 'file_delivery',
+        resourceId: newFile.id,
+        details: {
+          fileName: newFile.name,
+          deliveryMode: 'lan',
+          recipientsCount: recipients.length,
+          clientIP,
+          successfulDeliveries: successfulDeliveries.length,
+          failedDeliveries: deliveryResults.filter(r => !r.success).length
+        },
+        severity: AuditSeverity.LOW
+      })
+
+      console.log('=== LAN DELIVERY MODE END ===')
+    }
+
     // DELIVERY GUARANTEE: Final verification before response
     let finalSuccessfulShares = 0
     let finalFailedShares = 0
@@ -570,11 +670,8 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('POST /api/files error:', error)
-    return NextResponse.json({
-      error: "Upload failed",
-      details: error instanceof Error ? error.message : "Unknown error"
-    }, { status: 500 })
+    const { error: appError, response } = await handleApiError(error, 'File upload')
+    return NextResponse.json(response, { status: appError.statusCode })
   }
 }
 
@@ -721,6 +818,108 @@ async function processUserShares(
         success: false,
         error: `Failed to share file: ${errorMessage}`,
         shareType: 'USER'
+      })
+    }
+  }
+
+  return results
+}
+
+// Helper function to process LAN deliveries
+async function processLanDeliveries(
+  prisma: any,
+  fileId: string,
+  senderId: string,
+  senderEmail: string,
+  recipients: string[],
+  clientIP: string
+) {
+  const results = []
+
+  for (const email of recipients) {
+    try {
+      const normalizedEmail = email.trim().toLowerCase()
+
+      // Enhanced email validation
+      const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+      if (!emailRegex.test(normalizedEmail)) {
+        results.push({
+          email,
+          success: false,
+          error: 'Invalid email format',
+          deliveryType: 'lan'
+        })
+        continue
+      }
+
+      // Prevent self-delivery
+      if (normalizedEmail === senderEmail?.toLowerCase()) {
+        results.push({
+          email,
+          success: false,
+          error: 'Cannot deliver file to yourself',
+          deliveryType: 'lan'
+        })
+        continue
+      }
+
+      // Check if user exists
+      const recipientUser = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true, email: true, name: true }
+      })
+
+      if (!recipientUser) {
+        results.push({
+          email,
+          success: false,
+          error: 'Recipient email not registered in the system. They must create an account first.',
+          deliveryType: 'lan'
+        })
+        continue
+      }
+
+      // Check for existing delivery to prevent duplicates
+      const existingDelivery = await prisma.fileDelivery.findFirst({
+        where: {
+          fileId,
+          recipientId: recipientUser.id,
+          status: { in: ['PENDING', 'DELIVERED'] },
+          expiresAt: { gt: new Date() }
+        }
+      })
+
+      if (existingDelivery) {
+        results.push({
+          email,
+          success: false,
+          error: 'File already delivered to this recipient',
+          deliveryType: 'lan',
+          existingDelivery: true
+        })
+        continue
+      }
+
+      results.push({
+        email: normalizedEmail,
+        success: true,
+        recipientUser,
+        deliveryType: 'lan'
+      })
+
+    } catch (error) {
+      console.error('Error processing LAN delivery for', email, ':', error)
+
+      let errorMessage = 'Unknown error occurred'
+      if (error instanceof Error) {
+        errorMessage = error.message
+      }
+
+      results.push({
+        email,
+        success: false,
+        error: `Failed to process delivery: ${errorMessage}`,
+        deliveryType: 'lan'
       })
     }
   }

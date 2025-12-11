@@ -16,23 +16,15 @@ export async function GET(request: NextRequest) {
     // Get pending email notifications for the user
     const pendingNotifications = await prisma.emailLog.findMany({
       where: {
-        recipientEmail: session.user.email,
+        recipient: session.user.email,
         status: 'SENT',
         // Only get notifications from the last 24 hours
-        createdAt: {
+        sentAt: {
           gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
         }
       },
-      include: {
-        fileShare: {
-          include: {
-            file: true,
-            creator: true
-          }
-        }
-      },
       orderBy: {
-        createdAt: 'desc'
+        sentAt: 'desc'
       },
       take: 10 // Limit to prevent overwhelming the user
     })
@@ -41,15 +33,9 @@ export async function GET(request: NextRequest) {
     const notifications = pendingNotifications.map((log: any) => ({
       id: log.id,
       type: log.type,
-      recipientEmail: log.recipientEmail,
-      fileData: log.fileShare ? {
-        id: log.fileShare.id,
-        name: log.fileShare.file.originalName || log.fileShare.file.name,
-        size: log.fileShare.file.size,
-        senderName: log.fileShare.creator.name,
-        senderEmail: log.fileShare.creator.email
-      } : null,
-      sentAt: log.createdAt.toISOString(),
+      recipientEmail: log.recipient,
+      fileData: null, // File data not available in current schema
+      sentAt: log.sentAt.toISOString(),
       status: log.status
     }))
 

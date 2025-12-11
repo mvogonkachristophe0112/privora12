@@ -28,6 +28,20 @@ interface ReceivedFile {
   sharedAt: string
   permissions: string
   expiresAt?: string
+  deliveryStatus?: {
+    status: string
+    deliveredAt?: string
+    viewedAt?: string
+    downloadedAt?: string
+    retryCount?: number
+    failureReason?: string
+  }
+  verificationStatus?: 'verified' | 'pending' | 'failed'
+  verificationDetails?: {
+    ipVerified: boolean
+    emailVerified: boolean
+    timestampVerified: boolean
+  }
 }
 
 function ReceiveContent() {
@@ -36,60 +50,64 @@ function ReceiveContent() {
     const { incrementNewFiles, clearNewFiles } = useNotifications()
     const { addToQueue } = useDownloadManager()
     const { addToast } = useToast()
-   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
-   const [loading, setLoading] = useState(true)
-   const [error, setError] = useState<string | null>(null)
-   const [decryptingFile, setDecryptingFile] = useState<ReceivedFile | null>(null)
-   const [decryptionKey, setDecryptionKey] = useState("")
-   const [decryptionError, setDecryptionError] = useState<string | null>(null)
-   const [downloading, setDownloading] = useState(false)
-   const [deletingFile, setDeletingFile] = useState<ReceivedFile | null>(null)
-   const [viewingFile, setViewingFile] = useState<ReceivedFile | null>(null)
-   const [actionLoading, setActionLoading] = useState<string | null>(null) // Track which file is being acted upon
-   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
-   const [searchQuery, setSearchQuery] = useState("")
-   const [filterType, setFilterType] = useState<string>("all")
-   const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
-   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
-   // Advanced search and filtering states
-   const [advancedSearch, setAdvancedSearch] = useState(false)
-   const [searchInContent, setSearchInContent] = useState(false)
-   const [exactMatch, setExactMatch] = useState(false)
-   const [caseSensitive, setCaseSensitive] = useState(false)
-   const [savedFilters, setSavedFilters] = useState<any[]>([])
-   const [activeFilterPreset, setActiveFilterPreset] = useState<string>("")
+    // Enhanced state management
+    const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [verifyingFiles, setVerifyingFiles] = useState<Set<string>>(new Set())
+    const [verificationResults, setVerificationResults] = useState<Map<string, { status: 'verified' | 'pending' | 'failed', details?: string }>>(new Map())
+    const [decryptingFile, setDecryptingFile] = useState<ReceivedFile | null>(null)
+    const [decryptionKey, setDecryptionKey] = useState("")
+    const [decryptionError, setDecryptionError] = useState<string | null>(null)
+    const [downloading, setDownloading] = useState(false)
+    const [deletingFile, setDeletingFile] = useState<ReceivedFile | null>(null)
+    const [viewingFile, setViewingFile] = useState<ReceivedFile | null>(null)
+    const [actionLoading, setActionLoading] = useState<string | null>(null) // Track which file is being acted upon
+    const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
+    const [searchQuery, setSearchQuery] = useState("")
+    const [filterType, setFilterType] = useState<string>("all")
+    const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date")
+    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
-   // Enhanced filtering states
-   const [dateFrom, setDateFrom] = useState("")
-   const [dateTo, setDateTo] = useState("")
-   const [filterPermissions, setFilterPermissions] = useState<string[]>([])
-   const [senderFilter, setSenderFilter] = useState("")
-   const [sizeMin, setSizeMin] = useState("")
-   const [sizeMax, setSizeMax] = useState("")
-   const [availableSenders, setAvailableSenders] = useState<string[]>([])
-   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
-   const [previewFile, setPreviewFile] = useState<ReceivedFile | null>(null)
-   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-   const [previewLoading, setPreviewLoading] = useState(false)
+    // Advanced search and filtering states
+    const [advancedSearch, setAdvancedSearch] = useState(false)
+    const [searchInContent, setSearchInContent] = useState(false)
+    const [exactMatch, setExactMatch] = useState(false)
+    const [caseSensitive, setCaseSensitive] = useState(false)
+    const [savedFilters, setSavedFilters] = useState<any[]>([])
+    const [activeFilterPreset, setActiveFilterPreset] = useState<string>("")
 
-   // Accept/Reject states
-   const [acceptRejectFile, setAcceptRejectFile] = useState<ReceivedFile | null>(null)
-   const [acceptRejectAction, setAcceptRejectAction] = useState<'accept' | 'reject' | null>(null)
-   const [showAcceptRejectConfirm, setShowAcceptRejectConfirm] = useState(false)
+    // Enhanced filtering states
+    const [dateFrom, setDateFrom] = useState("")
+    const [dateTo, setDateTo] = useState("")
+    const [filterPermissions, setFilterPermissions] = useState<string[]>([])
+    const [senderFilter, setSenderFilter] = useState("")
+    const [sizeMin, setSizeMin] = useState("")
+    const [sizeMax, setSizeMax] = useState("")
+    const [availableSenders, setAvailableSenders] = useState<string[]>([])
+    const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+    const [previewFile, setPreviewFile] = useState<ReceivedFile | null>(null)
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+    const [previewLoading, setPreviewLoading] = useState(false)
 
-   // Bulk operations states
-   const [bulkOperation, setBulkOperation] = useState<'accept' | 'reject' | 'delete' | 'export' | null>(null)
-   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
-   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null)
-   const [bulkResults, setBulkResults] = useState<any[] | null>(null)
- 
-   // Performance optimizations
-   const [currentPage, setCurrentPage] = useState(1)
-   const [filesPerPage] = useState(20) // Load 20 files at a time
-   const [totalFiles, setTotalFiles] = useState(0)
-   const [cachedFiles, setCachedFiles] = useState<Map<number, ReceivedFile[]>>(new Map())
-   const [isLoadingMore, setIsLoadingMore] = useState(false)
+    // Accept/Reject states
+    const [acceptRejectFile, setAcceptRejectFile] = useState<ReceivedFile | null>(null)
+    const [acceptRejectAction, setAcceptRejectAction] = useState<'accept' | 'reject' | null>(null)
+    const [showAcceptRejectConfirm, setShowAcceptRejectConfirm] = useState(false)
+
+    // Bulk operations states
+    const [bulkOperation, setBulkOperation] = useState<'accept' | 'reject' | 'delete' | 'export' | null>(null)
+    const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+    const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null)
+    const [bulkResults, setBulkResults] = useState<any[] | null>(null)
+
+    // Performance optimizations
+    const [currentPage, setCurrentPage] = useState(1)
+    const [filesPerPage] = useState(20) // Load 20 files at a time
+    const [totalFiles, setTotalFiles] = useState(0)
+    const [cachedFiles, setCachedFiles] = useState<Map<number, ReceivedFile[]>>(new Map())
+    const [isLoadingMore, setIsLoadingMore] = useState(false)
 
   const fetchReceivedFiles = useCallback(async (showNotifications = false, page = 1, append = false) => {
     if (!session) return
@@ -329,14 +347,124 @@ function ReceiveContent() {
        }
      }
 
+     // LAN delivery event handlers
+     const handleLanFileDelivery = async (data: any) => {
+       console.log('LAN file delivery initiated:', data)
+
+       // Check if this delivery is for the current user
+       if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
+         console.log('LAN delivery initiated for current user, refreshing files...')
+
+         // Show notification for LAN delivery initiation
+         addToast({
+           type: 'info',
+           title: '📡 LAN File Delivery',
+           message: `"${data.fileName}" is being delivered via LAN from ${data.senderName || data.senderEmail.split('@')[0]}`,
+           duration: 5000,
+           action: {
+             label: 'View Files',
+             onClick: () => {
+               window.scrollTo({ top: 0, behavior: 'smooth' })
+             }
+           }
+         })
+
+         // Refresh files to show the new delivery
+         await fetchReceivedFiles(true)
+       }
+     }
+
+     const handleLanDeliveryStatusUpdate = (data: any) => {
+       console.log('LAN delivery status update:', data)
+
+       // Update delivery status in UI if needed
+       if (data.status) {
+         // Show status update notifications for LAN deliveries
+         if (data.status === 'delivered') {
+           addToast({
+             type: 'success',
+             title: 'LAN Delivery Complete',
+             message: 'File has been successfully delivered via LAN',
+             duration: 3000
+           })
+         } else if (data.status === 'failed') {
+           addToast({
+             type: 'error',
+             title: 'LAN Delivery Failed',
+             message: 'File delivery via LAN failed. Retrying...',
+             duration: 5000
+           })
+         }
+       }
+     }
+
+     const handleLanDeliveryRetry = (data: any) => {
+       console.log('LAN delivery retry:', data)
+
+       addToast({
+         type: 'warning',
+         title: 'LAN Delivery Retry',
+         message: 'Retrying file delivery via LAN...',
+         duration: 3000
+       })
+     }
+
+     const handleLanDeliveryCompleted = (data: any) => {
+       console.log('LAN delivery completed:', data)
+
+       // Check if this completion is for the current user
+       if (data.recipientId === session.user.id) {
+         addToast({
+           type: 'success',
+           title: '📡 LAN Delivery Complete',
+           message: 'File has been successfully delivered via LAN',
+           duration: 4000,
+           action: {
+             label: 'View File',
+             onClick: () => {
+               window.scrollTo({ top: 0, behavior: 'smooth' })
+             }
+           }
+         })
+
+         // Refresh files to update the delivery status
+         fetchReceivedFiles(true)
+       }
+     }
+
+     const handleLanDeliveryFailed = (data: any) => {
+       console.log('LAN delivery failed:', data)
+
+       addToast({
+         type: 'error',
+         title: 'LAN Delivery Failed',
+         message: 'File delivery via LAN failed. The sender will be notified.',
+         duration: 6000
+       })
+     }
+
      socket.on('file-shared', handleFileShared)
      socket.on('delivery-status-update', handleDeliveryStatusUpdate)
      socket.on('connection-status', handleConnectionStatus)
+
+     // LAN delivery events
+     socket.on('lan-file-delivery', handleLanFileDelivery)
+     socket.on('lan-delivery-status-update', handleLanDeliveryStatusUpdate)
+     socket.on('lan-delivery-retry', handleLanDeliveryRetry)
+     socket.on('lan-delivery-completed', handleLanDeliveryCompleted)
+     socket.on('lan-delivery-failed', handleLanDeliveryFailed)
 
      return () => {
        socket.off('file-shared', handleFileShared)
        socket.off('delivery-status-update', handleDeliveryStatusUpdate)
        socket.off('connection-status', handleConnectionStatus)
+
+       // Clean up LAN delivery event listeners
+       socket.off('lan-file-delivery', handleLanFileDelivery)
+       socket.off('lan-delivery-status-update', handleLanDeliveryStatusUpdate)
+       socket.off('lan-delivery-retry', handleLanDeliveryRetry)
+       socket.off('lan-delivery-completed', handleLanDeliveryCompleted)
+       socket.off('lan-delivery-failed', handleLanDeliveryFailed)
      }
    }, [socket, session, fetchReceivedFiles, addToast])
 

@@ -37,11 +37,84 @@ export default function Connections() {
     const { data: session } = useSession()
     const router = useRouter()
     const { userPresence } = usePresence()
-    const { users, newUsers, clearNewUsers, getUserPresence: getUserPresenceFromHook } = useUserDetection()
+    const { users, newUsers, clearNewUsers } = useUserDetection()
     const { addToast } = useToast()
 
-   // Use presence from the hook
-   const getUserPresence = getUserPresenceFromHook
+    // Helper function to get user presence status
+    const getUserPresence = (email: string): {
+        status: string;
+        text: string;
+        color: string;
+        dotColor: string;
+        deviceType: 'phone' | 'laptop' | 'tablet' | 'desktop';
+        lastSeen: Date;
+    } => {
+        const presence = userPresence[email]
+        if (presence?.isOnline) {
+            return {
+                status: 'online',
+                text: 'Online',
+                color: 'text-green-600',
+                dotColor: 'bg-green-500',
+                deviceType: presence.deviceType,
+                lastSeen: presence.lastSeen
+            }
+        } else if (presence) {
+            const lastSeen = new Date(presence.lastSeen)
+            const now = new Date()
+            const diffMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60))
+
+            if (diffMinutes < 1) {
+                return {
+                    status: 'away',
+                    text: 'Last seen just now',
+                    color: 'text-gray-500',
+                    dotColor: 'bg-gray-400',
+                    deviceType: presence.deviceType,
+                    lastSeen: presence.lastSeen
+                }
+            }
+            if (diffMinutes < 60) {
+                return {
+                    status: 'away',
+                    text: `Last seen ${diffMinutes}m ago`,
+                    color: 'text-gray-500',
+                    dotColor: 'bg-gray-400',
+                    deviceType: presence.deviceType,
+                    lastSeen: presence.lastSeen
+                }
+            }
+
+            const diffHours = Math.floor(diffMinutes / 60)
+            if (diffHours < 24) {
+                return {
+                    status: 'away',
+                    text: `Last seen ${diffHours}h ago`,
+                    color: 'text-gray-500',
+                    dotColor: 'bg-gray-400',
+                    deviceType: presence.deviceType,
+                    lastSeen: presence.lastSeen
+                }
+            }
+
+            return {
+                status: 'offline',
+                text: `Last seen ${lastSeen.toLocaleDateString()}`,
+                color: 'text-gray-400',
+                dotColor: 'bg-gray-300',
+                deviceType: presence.deviceType,
+                lastSeen: presence.lastSeen
+            }
+        }
+        return {
+            status: 'offline',
+            text: 'Offline',
+            color: 'text-gray-400',
+            dotColor: 'bg-gray-300',
+            deviceType: 'desktop' as const,
+            lastSeen: new Date()
+        }
+    }
   const [connections, setConnections] = useState<Connection[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
