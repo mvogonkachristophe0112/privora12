@@ -10,25 +10,29 @@ import { Loading } from "@/components/Loading"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 interface ReceivedFile {
-  id: string // Share ID
-  fileId: string // Actual file ID for downloads
-  name: string
-  originalName: string
-  size: number
-  type: string
-  url: string
-  encrypted: boolean
-  senderEmail: string
-  senderName?: string
-  sharedAt: string
-  permissions: string
-  expiresAt?: string
-  deliveryStatus?: {
-    status: string
-    deliveredAt?: string
-    viewedAt?: string
-    downloadedAt?: string
-  }
+   id: string // Share ID
+   fileId: string // Actual file ID for downloads
+   name: string
+   originalName: string
+   size: number
+   type: string
+   url: string
+   encrypted: boolean
+   senderEmail: string
+   senderName?: string
+   sharedAt: string
+   permissions: string[]
+   expiresAt?: string
+   maxAccessCount?: number
+   accessCount: number
+   revoked: boolean
+   password?: string
+   deliveryStatus?: {
+     status: string
+     deliveredAt?: string
+     viewedAt?: string
+     downloadedAt?: string
+   }
 }
 
 function ReceiveContent() {
@@ -142,37 +146,138 @@ function ReceiveContent() {
 
   // Download file handler
   const handleDownload = async (file: ReceivedFile) => {
-    try {
-      setDownloading(file.id)
+    if (downloading) return
 
-      const response = await fetch(`/api/files/download/${file.fileId}`)
-      if (!response.ok) {
-        throw new Error('Download failed')
+    setDownloading(file.id)
+
+    try {
+      // Check if file is expired
+      if (file.expiresAt && new Date(file.expiresAt) < new Date()) {
+        addToast({
+          type: 'error',
+          title: 'File expired',
+          message: 'This file has expired and cannot be downloaded',
+          duration: 5000
+        })
+        return
       }
 
+      // Check if access count exceeded
+      if (file.maxAccessCount && file.accessCount >= file.maxAccessCount) {
+        addToast({
+          type: 'error',
+          title: 'Download limit reached',
+          message: 'The download limit for this file has been exceeded',
+          duration: 5000
+        })
+        return
+      }
+
+      // Check if file is revoked
+      if (file.revoked) {
+        addToast({
+          type: 'error',
+          title: 'File revoked',
+          message: 'This file has been revoked and is no longer available',
+          duration: 5000
+        })
+        return
+      }
+
+      // Check permissions
+      if (!file.permissions.includes('DOWNLOAD')) {
+        addToast({
+          type: 'error',
+          title: 'Permission denied',
+          message: 'You do not have download permission for this file',
+          duration: 5000
+        })
+        return
+      }
+
+      // Check if password is required
+      let password = ''
+      if (file.password) {
+        password = prompt('Enter password to download this file:') || ''
+        if (!password) {
+          setDownloading(null)
+          return
+        }
+      }
+
+      // Check if decryption key is required for encrypted files
+      let decryptionKey = ''
+      if (file.encrypted) {
+        decryptionKey = prompt('Enter decryption key for this encrypted file:') || ''
+        if (!decryptionKey) {
+          setDownloading(null)
+          return
+        }
+      }
+
+      // Create download URL with parameters
+      let downloadUrl = `/api/files/download/${file.fileId}`
+      const params = new URLSearchParams()
+
+      if (password) {
+        params.append('password', password)
+      }
+
+      if (decryptionKey) {
+        params.append('key', decryptionKey)
+      }
+
+      if (params.toString()) {
+        downloadUrl += `?${params.toString()}`
+      }
+
+      // Fetch the file data
+      const response = await fetch(downloadUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': '*/*',
+        },
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || `Download failed: ${response.status}`)
+      }
+
+      // Get the file data as blob
       const blob = await response.blob()
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = downloadUrl
-      a.download = file.originalName || file.name
-      a.style.display = 'none'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(downloadUrl)
+
+      // Create download link with blob
+      const blobUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = file.originalName
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      // Clean up the blob URL
+      URL.revokeObjectURL(blobUrl)
 
       addToast({
         type: 'success',
         title: 'Download completed',
-        message: `${file.name} downloaded successfully`,
+        message: `${file.name} has been downloaded successfully`,
         duration: 3000
       })
+
+      // Refresh the file list to update access counts
+      setTimeout(() => {
+        fetchReceivedFiles()
+      }, 1000)
+
     } catch (error) {
       console.error('Download error:', error)
       addToast({
         type: 'error',
         title: 'Download failed',
-        message: `Failed to download ${file.name}`,
+        message: error instanceof Error ? error.message : 'Failed to download the file. Please try again.',
         duration: 5000
       })
     } finally {

@@ -132,6 +132,12 @@ export default function CrypChat() {
   }
 
   const fetchMessages = async () => {
+    // Don't fetch messages if user is not authenticated
+    if (!session?.user) {
+      setMessages([])
+      return
+    }
+
     try {
       const res = await fetch(`/api/messages?roomId=${roomId}`)
       if (res.ok) {
