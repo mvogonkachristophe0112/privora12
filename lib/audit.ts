@@ -49,9 +49,22 @@ export interface AuditLogData {
 export async function logAuditEvent(data: AuditLogData) {
   try {
     const prisma = await getPrismaClient()
+
+    // Check if user exists before logging (handles database reset scenarios)
+    let userId: string | null | undefined = data.userId
+    if (userId) {
+      const userExists = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true }
+      })
+      if (!userExists) {
+        userId = null // Set to null if user doesn't exist
+      }
+    }
+
     await prisma.auditLog.create({
       data: {
-        userId: data.userId,
+        userId: userId,
         action: data.action,
         resource: data.resource,
         resourceId: data.resourceId,

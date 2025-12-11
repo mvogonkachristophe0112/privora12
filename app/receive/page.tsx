@@ -94,30 +94,49 @@ function ReceiveContent() {
   useEffect(() => {
     if (!socket || !session) return
 
-    const handleFileShared = (data: any) => {
-      // Check if this file is for the current user
-      if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
-        console.log('New file received via real-time:', data)
+    // Register user with socket server
+    socket.emit('register-user', {
+      userId: session.user.id,
+      email: session.user.email
+    })
 
-        // Show notification
-        addToast({
-          type: 'success',
-          title: '📨 New file received!',
-          message: `"${data.fileName}" from ${data.senderName || data.senderEmail.split('@')[0]}`,
-          duration: 6000
-        })
+    const handleFileReceived = (data: any) => {
+      console.log('New file received via real-time:', data)
 
-        // Refresh the file list
-        fetchReceivedFiles(true)
-      }
+      // Show notification
+      addToast({
+        type: 'success',
+        title: '📨 New file received!',
+        message: `"${data.fileName}" from ${data.senderName || data.senderEmail?.split('@')[0] || 'Unknown'}`,
+        duration: 6000
+      })
+
+      // Refresh the file list
+      fetchReceivedFiles(true)
     }
 
-    socket.on('file-shared', handleFileShared)
-    socket.on('lan-file-delivery', handleFileShared)
+    const handleRegistrationSuccess = (data: any) => {
+      console.log('Socket registration successful:', data)
+    }
+
+    const handleRegistrationFailed = (data: any) => {
+      console.error('Socket registration failed:', data)
+      addToast({
+        type: 'error',
+        title: 'Connection Error',
+        message: 'Failed to connect to real-time service',
+        duration: 5000
+      })
+    }
+
+    socket.on('file-received', handleFileReceived)
+    socket.on('registration-success', handleRegistrationSuccess)
+    socket.on('registration-failed', handleRegistrationFailed)
 
     return () => {
-      socket.off('file-shared', handleFileShared)
-      socket.off('lan-file-delivery', handleFileShared)
+      socket.off('file-received', handleFileReceived)
+      socket.off('registration-success', handleRegistrationSuccess)
+      socket.off('registration-failed', handleRegistrationFailed)
     }
   }, [socket, session, fetchReceivedFiles, addToast])
 

@@ -64,14 +64,32 @@ export async function GET(request: NextRequest) {
     })
 
     if (!room) {
-      room = await prisma.chatRoom.create({
-        data: {
-          id: roomId,
-          name: roomId.charAt(0).toUpperCase() + roomId.slice(1),
-          type: "group",
-          creatorId: session.user.id
-        }
+      // Check if the user exists in the database
+      const userExists = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { id: true }
       })
+
+      if (userExists) {
+        room = await prisma.chatRoom.create({
+          data: {
+            id: roomId,
+            name: roomId.charAt(0).toUpperCase() + roomId.slice(1),
+            type: "group",
+            creatorId: session.user.id
+          }
+        })
+      } else {
+        // Create room without creatorId if user doesn't exist (database reset scenario)
+        room = await prisma.chatRoom.create({
+          data: {
+            id: roomId,
+            name: roomId.charAt(0).toUpperCase() + roomId.slice(1),
+            type: "group",
+            creatorId: null
+          }
+        })
+      }
     }
 
     // Optimized query with pagination for scalability
@@ -154,14 +172,39 @@ export async function POST(request: NextRequest) {
     })
 
     if (!room) {
-      room = await prisma.chatRoom.create({
-        data: {
-          id: roomId,
-          name: roomId.charAt(0).toUpperCase() + roomId.slice(1),
-          type: "group",
-          creatorId: session.user.id
-        }
+      // Check if the user exists in the database
+      const userExists = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { id: true }
       })
+  
+      if (userExists) {
+        room = await prisma.chatRoom.create({
+          data: {
+            id: roomId,
+            name: roomId.charAt(0).toUpperCase() + roomId.slice(1),
+            type: "group",
+            creatorId: session.user.id
+          }
+        })
+      } else {
+        // Skip creating room if user doesn't exist (database reset scenario)
+        // Return existing room or create a minimal response
+        room = await prisma.chatRoom.findUnique({
+          where: { id: roomId }
+        })
+  
+        if (!room) {
+          // Return a mock room object for the response
+          room = {
+            id: roomId,
+            name: roomId.charAt(0).toUpperCase() + roomId.slice(1),
+            type: "group",
+            creatorId: session.user.id, // Keep the session ID for response consistency
+            createdAt: new Date()
+          } as any
+        }
+      }
     }
 
     // Create message with transaction for consistency

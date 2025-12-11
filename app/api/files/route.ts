@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next"
 import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
 import { encryptFile } from "@/lib/crypto"
-import { emitSocketEvent } from "@/lib/socket"
+import { emitSocketEvent, emitToUser } from "@/lib/socket"
 import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
 import { deliveryTracker } from "@/lib/delivery-tracker"
 import { PathSanitizer, InputValidator, ContentSecurity, RateLimiter } from "@/lib/security"
@@ -491,20 +491,29 @@ export async function POST(request: NextRequest) {
       const verifiedSuccessfulShares = shareResults.filter(r => r.success && r.deliveryGuaranteed)
       for (const result of verifiedSuccessfulShares) {
         try {
-          emitSocketEvent('file-shared', {
-            fileId: newFile.id,
-            fileName: newFile.name,
-            senderEmail: session.user.email,
-            senderId: session.user.id,
-            receiverEmail: result.email || result.groupName,
-            receiverId: result.recipientUser?.id || result.groupId,
-            permissions,
-            expiresAt: expiresAt?.toISOString(),
-            sharedAt: new Date().toISOString(),
-            shareType: result.shareType,
-            shareId: result.share.id // Include share ID for tracking
-          })
-          console.log(`📡 Real-time notification sent for share ${result.share.id}`)
+          // Use targeted delivery to specific user
+          if (result.recipientUser?.id) {
+            const delivered = emitToUser(result.recipientUser.id, 'file-shared', {
+              shareId: result.share.id,
+              fileId: newFile.id,
+              fileName: newFile.name,
+              senderEmail: session.user.email,
+              senderId: session.user.id,
+              receiverEmail: result.email,
+              receiverId: result.recipientUser.id,
+              permissions,
+              expiresAt: expiresAt?.toISOString(),
+              sharedAt: new Date().toISOString(),
+              shareType: result.shareType,
+              deliveryStatus: 'pending'
+            })
+
+            if (delivered) {
+              console.log(`📡 Targeted real-time notification sent for share ${result.share.id} to user ${result.recipientUser.id}`)
+            } else {
+              console.warn(`Failed to deliver notification for share ${result.share.id} - user not connected`)
+            }
+          }
         } catch (socketError) {
           console.error(`Failed to emit socket event for share ${result.share.id}:`, socketError)
         }
@@ -557,8 +566,9 @@ export async function POST(request: NextRequest) {
 
             console.log(`📦 LAN delivery record created for ${result.email}: ${deliveryRecord.id}`)
 
-            // Emit real-time notification for LAN delivery
-            emitSocketEvent('lan-file-delivery', {
+            // Emit targeted real-time notification for LAN delivery
+            const delivered = emitToUser(result.recipientUser.id, 'lan-file-delivery', {
+              shareId: deliveryRecord.id, // Use delivery ID as share ID for LAN
               fileId: newFile.id,
               fileName: newFile.name,
               senderEmail: session.user.email,
@@ -570,6 +580,12 @@ export async function POST(request: NextRequest) {
               deliveredAt: new Date().toISOString(),
               deliveryType: 'lan'
             })
+
+            if (delivered) {
+              console.log(`📡 LAN delivery notification sent to user ${result.recipientUser.id}`)
+            } else {
+              console.warn(`LAN delivery notification failed - user ${result.recipientUser.id} not connected`)
+            }
 
           } catch (deliveryError) {
             console.error(`Failed to create delivery record for ${result.email}:`, deliveryError)

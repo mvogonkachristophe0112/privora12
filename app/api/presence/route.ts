@@ -54,6 +54,21 @@ export async function POST(request: NextRequest) {
      const { userId, deviceType, user } = await request.json()
      const prisma = await getPrismaClient()
 
+     // Check if user exists before updating presence (handles database reset scenarios)
+     const userExists = await prisma.user.findUnique({
+       where: { id: userId },
+       select: { id: true }
+     })
+
+     if (!userExists) {
+       // User doesn't exist in database, return success without updating presence
+       return NextResponse.json({
+         success: true,
+         presence: null,
+         message: "User presence not updated - user not found in database"
+       })
+     }
+
      // Get client IP address for tracking
      const clientIP = request.headers.get('x-forwarded-for') ||
                       request.headers.get('x-real-ip') ||
@@ -183,6 +198,21 @@ export async function PATCH(request: NextRequest) {
      const { status } = await request.json()
      const prisma = await getPrismaClient()
 
+     // Check if user exists before updating presence (handles database reset scenarios)
+     const userExists = await prisma.user.findUnique({
+       where: { id: session.user.id },
+       select: { id: true }
+     })
+
+     if (!userExists) {
+       // User doesn't exist in database, return success without updating presence
+       return NextResponse.json({
+         success: true,
+         presence: null,
+         message: "User presence not updated - user not found in database"
+       })
+     }
+
      const presence = await prisma.userPresence.upsert({
        where: { userId: session.user.id },
        update: {
@@ -216,6 +246,21 @@ export async function DELETE(request: NextRequest) {
 
     const { userId, deviceType, lastSeen } = await request.json()
     const prisma = await getPrismaClient()
+
+    // Check if user exists before updating presence (handles database reset scenarios)
+    const userExists = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true }
+    })
+
+    if (!userExists) {
+      // User doesn't exist in database, return success without updating presence
+      return NextResponse.json({
+        success: true,
+        presence: null,
+        message: "User presence not updated - user not found in database"
+      })
+    }
 
     const presence = await prisma.userPresence.upsert({
       where: { userId },
