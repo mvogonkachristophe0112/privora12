@@ -43,27 +43,9 @@ const nextConfig: NextConfig = {
     ]
   },
 
-  // Experimental features for better performance
-  experimental: {
-    optimizeCss: true,
-    scrollRestoration: true,
-  },
+  // Experimental features removed - Next.js 16 has these as defaults
 
-  // Bundle analyzer (only in development)
-  ...(process.env.ANALYZE === 'true' && {
-    webpack: (config: any) => {
-      if (process.env.NODE_ENV === 'development') {
-        const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer')
-        config.plugins.push(
-          new BundleAnalyzerPlugin({
-            analyzerMode: 'server',
-            openAnalyzer: true,
-          })
-        )
-      }
-      return config
-    },
-  }),
+  // Bundle analyzer removed - use separate webpack config if needed
 };
 
 export default nextConfig;

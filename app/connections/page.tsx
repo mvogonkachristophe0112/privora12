@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
-import { usePresence } from "@/lib/presence-context"
 import { useUserDetection } from "@/lib/useUserDetection"
 import { useUserPresence } from "@/lib/presence-context"
 import { useToast } from "@/components/Toast"
