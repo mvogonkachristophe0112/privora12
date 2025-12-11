@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
     console.log('Local file storage successful, path:', filePath)
 
     // Create local URL for file access
-    const localUrl = `/api/files/download/${localFileName}`
+    const localUrl = `/api/files/download/local/${localFileName}`
 
     console.log('Saving to database...')
     const maxRetries = 3
