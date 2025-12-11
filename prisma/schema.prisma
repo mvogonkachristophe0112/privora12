@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 enum FilePermission {
@@ -92,9 +92,9 @@ model User {
   image         String?
   password      String?
   role          String           @default("user")
-  // Email notification preferences
+  // Email notification preferences (disabled for offline)
   emailNotifications EmailNotificationFrequency @default(IMMEDIATE)
-  emailNotificationTypes EmailNotificationType[] @default([NEW_SHARES])
+  emailNotificationTypes String @default("[]") // JSON string for offline compatibility
   emailUnsubscribed Boolean @default(false)
   accounts      Account[]
   sessions      Session[]
@@ -150,7 +150,7 @@ model FileShare {
   sharedWithEmail String?
   shareType       ShareType      @default(USER)
   status          ShareStatus    @default(PENDING)
-  permissions     FilePermission[] // Array of permissions
+  permissions     String         @default("[]") // JSON string for offline compatibility
   password        String?
   expiresAt       DateTime?
   maxAccessCount  Int?           // Maximum number of accesses allowed
