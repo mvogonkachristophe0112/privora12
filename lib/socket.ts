@@ -105,6 +105,32 @@ export const initSocket = (httpServer: NetServer): ServerIO => {
       socket.broadcast.emit('group-member-added', data)
     })
 
+    // Handle LAN file delivery events
+    socket.on('lan-file-delivery', (data) => {
+      console.log('LAN file delivery initiated:', data)
+      socket.broadcast.emit('lan-file-delivery', data)
+    })
+
+    socket.on('lan-delivery-status-update', (data) => {
+      console.log('LAN delivery status update:', data)
+      socket.broadcast.emit('lan-delivery-status-update', data)
+    })
+
+    socket.on('lan-delivery-retry', (data) => {
+      console.log('LAN delivery retry:', data)
+      socket.broadcast.emit('lan-delivery-retry', data)
+    })
+
+    socket.on('lan-delivery-completed', (data) => {
+      console.log('LAN delivery completed:', data)
+      socket.broadcast.emit('lan-delivery-completed', data)
+    })
+
+    socket.on('lan-delivery-failed', (data) => {
+      console.log('LAN delivery failed:', data)
+      socket.broadcast.emit('lan-delivery-failed', data)
+    })
+
     // Handle connection requests
     socket.on('request-connection', (data) => {
       console.log('Connection requested:', data)

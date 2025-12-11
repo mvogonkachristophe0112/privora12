@@ -66,11 +66,17 @@ export function useUserDetection() {
     }
   }, [session, users])
 
-  // Get user presence status using the useUserPresence hook
+  // Get user presence status - this will be replaced by direct usage of usePresence in components
   const getUserPresence = useCallback((email: string) => {
-    // Import useUserPresence dynamically to avoid circular dependency
-    const { useUserPresence } = require('./presence-context')
-    return useUserPresence(email)
+    // This is a placeholder - components should use usePresence directly
+    return {
+      status: 'offline',
+      text: 'Offline',
+      color: 'text-gray-400',
+      dotColor: 'bg-gray-300',
+      deviceType: 'desktop' as const,
+      lastSeen: new Date()
+    }
   }, [])
 
   // Initialize user detection

@@ -329,14 +329,124 @@ function ReceiveContent() {
        }
      }
 
+     // LAN delivery event handlers
+     const handleLanFileDelivery = async (data: any) => {
+       console.log('LAN file delivery initiated:', data)
+
+       // Check if this delivery is for the current user
+       if (data.receiverEmail?.toLowerCase() === session.user.email?.toLowerCase()) {
+         console.log('LAN delivery initiated for current user, refreshing files...')
+
+         // Show notification for LAN delivery initiation
+         addToast({
+           type: 'info',
+           title: '📡 LAN File Delivery',
+           message: `"${data.fileName}" is being delivered via LAN from ${data.senderName || data.senderEmail.split('@')[0]}`,
+           duration: 5000,
+           action: {
+             label: 'View Files',
+             onClick: () => {
+               window.scrollTo({ top: 0, behavior: 'smooth' })
+             }
+           }
+         })
+
+         // Refresh files to show the new delivery
+         await fetchReceivedFiles(true)
+       }
+     }
+
+     const handleLanDeliveryStatusUpdate = (data: any) => {
+       console.log('LAN delivery status update:', data)
+
+       // Update delivery status in UI if needed
+       if (data.status) {
+         // Show status update notifications for LAN deliveries
+         if (data.status === 'delivered') {
+           addToast({
+             type: 'success',
+             title: 'LAN Delivery Complete',
+             message: 'File has been successfully delivered via LAN',
+             duration: 3000
+           })
+         } else if (data.status === 'failed') {
+           addToast({
+             type: 'error',
+             title: 'LAN Delivery Failed',
+             message: 'File delivery via LAN failed. Retrying...',
+             duration: 5000
+           })
+         }
+       }
+     }
+
+     const handleLanDeliveryRetry = (data: any) => {
+       console.log('LAN delivery retry:', data)
+
+       addToast({
+         type: 'warning',
+         title: 'LAN Delivery Retry',
+         message: 'Retrying file delivery via LAN...',
+         duration: 3000
+       })
+     }
+
+     const handleLanDeliveryCompleted = (data: any) => {
+       console.log('LAN delivery completed:', data)
+
+       // Check if this completion is for the current user
+       if (data.recipientId === session.user.id) {
+         addToast({
+           type: 'success',
+           title: '📡 LAN Delivery Complete',
+           message: 'File has been successfully delivered via LAN',
+           duration: 4000,
+           action: {
+             label: 'View File',
+             onClick: () => {
+               window.scrollTo({ top: 0, behavior: 'smooth' })
+             }
+           }
+         })
+
+         // Refresh files to update the delivery status
+         fetchReceivedFiles(true)
+       }
+     }
+
+     const handleLanDeliveryFailed = (data: any) => {
+       console.log('LAN delivery failed:', data)
+
+       addToast({
+         type: 'error',
+         title: 'LAN Delivery Failed',
+         message: 'File delivery via LAN failed. The sender will be notified.',
+         duration: 6000
+       })
+     }
+
      socket.on('file-shared', handleFileShared)
      socket.on('delivery-status-update', handleDeliveryStatusUpdate)
      socket.on('connection-status', handleConnectionStatus)
+
+     // LAN delivery events
+     socket.on('lan-file-delivery', handleLanFileDelivery)
+     socket.on('lan-delivery-status-update', handleLanDeliveryStatusUpdate)
+     socket.on('lan-delivery-retry', handleLanDeliveryRetry)
+     socket.on('lan-delivery-completed', handleLanDeliveryCompleted)
+     socket.on('lan-delivery-failed', handleLanDeliveryFailed)
 
      return () => {
        socket.off('file-shared', handleFileShared)
        socket.off('delivery-status-update', handleDeliveryStatusUpdate)
        socket.off('connection-status', handleConnectionStatus)
+
+       // Clean up LAN delivery event listeners
+       socket.off('lan-file-delivery', handleLanFileDelivery)
+       socket.off('lan-delivery-status-update', handleLanDeliveryStatusUpdate)
+       socket.off('lan-delivery-retry', handleLanDeliveryRetry)
+       socket.off('lan-delivery-completed', handleLanDeliveryCompleted)
+       socket.off('lan-delivery-failed', handleLanDeliveryFailed)
      }
    }, [socket, session, fetchReceivedFiles, addToast])
 
