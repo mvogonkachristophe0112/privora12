@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth/next"
 import { getAuthOptions } from "@/lib/auth"
 import { getPrismaClient } from "@/lib/prisma"
-import { put } from '@vercel/blob'
 import { encryptFile } from "@/lib/crypto"
 import { emitSocketEvent } from "@/lib/socket"
 import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
-import { sendFileShareNotification, sendBulkShareNotification } from "@/lib/email"
 import { deliveryTracker } from "@/lib/delivery-tracker"
+import fs from 'fs/promises'
+import path from 'path'
+import crypto from 'crypto'
 
 export async function GET(request: NextRequest) {
   try {
@@ -295,13 +296,22 @@ export async function POST(request: NextRequest) {
       console.log('No encryption applied')
     }
 
-    console.log('Starting Vercel Blob upload...')
-    // Upload to Vercel Blob
-    const blob = await put(finalFileName, fileData, {
-      access: 'public',
-      contentType: encrypt ? 'application/octet-stream' : file.type || 'application/octet-stream'
-    })
-    console.log('Blob upload successful, URL:', blob.url)
+    console.log('Starting local file storage...')
+    // Generate unique filename for local storage
+    const uniqueId = crypto.randomUUID()
+    const localFileName = `${uniqueId}-${finalFileName}`
+    const uploadDir = path.resolve(process.cwd(), 'storage', 'uploads')
+
+    // Ensure upload directory exists
+    await fs.mkdir(uploadDir, { recursive: true })
+
+    // Write file to local storage
+    const filePath = path.join(uploadDir, localFileName)
+    await fs.writeFile(filePath, Buffer.from(fileData))
+    console.log('Local file storage successful, path:', filePath)
+
+    // Create local URL for file access
+    const localUrl = `/api/files/download/${localFileName}`
 
     console.log('Saving to database...')
     const maxRetries = 3
@@ -317,7 +327,7 @@ export async function POST(request: NextRequest) {
             originalName: file.name,
             size: file.size,
             type: file.type,
-            url: blob.url,
+            url: localUrl,
             encrypted: encrypt,
             encryptionKey: encrypt ? finalEncryptionKey : null,
             fileType: type,
@@ -542,34 +552,13 @@ export async function POST(request: NextRequest) {
     console.log('Response message:', responseMessage)
     console.log('=== UPLOAD REQUEST END ===\n')
 
-    // Send email notifications asynchronously (don't block response)
-    // Only send for verified successful shares
-    if (shareMode === 'share' && shareResults) {
-      const verifiedSuccessfulUserShares = shareResults.filter(r =>
-        r.success &&
-        r.shareType === 'USER' &&
-        r.deliveryGuaranteed
-      )
-
-      if (verifiedSuccessfulUserShares.length > 0) {
-        // Send notifications asynchronously
-        setImmediate(async () => {
-          try {
-            await sendVerifiedEmailNotifications(
-              verifiedSuccessfulUserShares,
-              newFile,
-              session
-            )
-          } catch (error) {
-            console.error('Failed to send verified email notifications:', error)
-          }
-        })
-      }
-    }
+    // Email notifications disabled for offline LAN deployment
+    // In a real offline deployment, you could implement local notifications here
+    console.log('Offline mode: Email notifications disabled')
 
     return NextResponse.json({
       ...newFile,
-      blobUrl: blob.url,
+      localUrl: localUrl,
       success: responseStatus,
       message: responseMessage,
       sharingResults: shareMode === 'share' ? {
@@ -739,80 +728,8 @@ async function processUserShares(
   return results
 }
 
-// Verified email notification sender - only sends for confirmed successful shares
-async function sendVerifiedEmailNotifications(
-  verifiedShares: any[],
-  newFile: any,
-  session: any
-) {
-  console.log(`📧 Sending verified email notifications for ${verifiedShares.length} shares`)
-
-  try {
-    // Send individual notifications for single shares
-    if (verifiedShares.length === 1) {
-      const share = verifiedShares[0]
-      const shareRecord = share.share
-
-      // Generate download URL with token
-      const downloadToken = `share_${shareRecord.id}_${Date.now()}`
-      const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
-
-      await sendFileShareNotification({
-        recipientEmail: share.email,
-        recipientName: share.recipientUser?.name || undefined,
-        senderEmail: session.user.email!,
-        senderName: session.user.name || undefined,
-        fileName: newFile.originalName || newFile.name,
-        fileSize: newFile.size,
-        fileType: newFile.type,
-        permissions: shareRecord.permissions,
-        expiresAt: shareRecord.expiresAt || undefined,
-        downloadUrl,
-        shareId: shareRecord.id,
-        encrypted: newFile.encrypted,
-      })
-
-      console.log(`✅ Email notification sent to ${share.email}`)
-    } else {
-      // Send bulk notification for multiple shares
-      const bulkFiles = verifiedShares.map(share => {
-        const shareRecord = share.share
-        const downloadToken = `share_${shareRecord.id}_${Date.now()}`
-        const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareRecord.id}`
-
-        return {
-          name: newFile.originalName || newFile.name,
-          size: newFile.size,
-          type: newFile.type,
-          permissions: shareRecord.permissions,
-          expiresAt: shareRecord.expiresAt || undefined,
-          downloadUrl,
-          shareId: shareRecord.id,
-        }
-      })
-
-      // Send bulk notifications to each recipient
-      for (const share of verifiedShares) {
-        try {
-          await sendBulkShareNotification({
-            recipientEmail: share.email,
-            recipientName: share.recipientUser?.name || undefined,
-            senderEmail: session.user.email!,
-            senderName: session.user.name || undefined,
-            files: bulkFiles,
-            totalFiles: bulkFiles.length,
-          })
-          console.log(`✅ Bulk email notification sent to ${share.email}`)
-        } catch (individualError) {
-          console.error(`Failed to send bulk notification to ${share.email}:`, individualError)
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Failed to send verified email notifications:', error)
-    throw error // Re-throw to be handled by caller
-  }
-}
+// Email notifications disabled for offline LAN deployment
+// In a real offline deployment, you could implement local notifications here
 
 // Helper function to process group shares
 async function processGroupShares(
