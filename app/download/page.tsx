@@ -41,7 +41,7 @@ interface DownloadableFile {
 }
 
 function DownloadContent() {
-  const { data: session } = useSession()
+  const { data: session, status } = useSession()
   const router = useRouter()
   const { addToast } = useToast()
 
@@ -49,16 +49,20 @@ function DownloadContent() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
+  const [fetched, setFetched] = useState(false)
 
   useEffect(() => {
+    if (status === 'loading') return
     if (!session) {
       router.push('/login')
       return
     }
     fetchFiles()
-  }, [session, router])
+  }, [session, status, router])
 
   const fetchFiles = async () => {
+    if (fetched) return
+
     try {
       setLoading(true)
       const response = await fetch('/api/files/received?page=1&limit=100')
@@ -69,6 +73,7 @@ function DownloadContent() {
       const data = await response.json()
       setFiles(data.files || [])
       setError(null)
+      setFetched(true)
     } catch (err) {
       console.error('Error fetching files:', err)
       setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
@@ -262,6 +267,17 @@ function DownloadContent() {
     }
 
     return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">Available</span>
+  }
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p>Loading...</p>
+        </div>
+      </div>
+    )
   }
 
   if (!session) {
