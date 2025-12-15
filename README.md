@@ -1,24 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Privora12 - Secure File Sharing Platform
 
-## Getting Started
+A Next.js application for secure file sharing with real-time notifications, built exclusively for Vercel deployment with Neon PostgreSQL database.
 
-First, run the development server:
+## 🚀 Deployment
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+This application is configured for **Vercel-only deployment** and is not intended to run locally. The live application is available at:
 
-Open [https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app](https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app) with your browser to see the result.
+**[https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app](https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app)**
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## ⚙️ Setup Instructions
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Prerequisites
+- Vercel account
+- Neon PostgreSQL database
+- Gmail account (for email notifications)
+
+### Environment Variables Setup
+
+1. **Copy the environment template:**
+   ```bash
+   cp .env.example .env.local
+   ```
+
+2. **Configure Vercel Environment Variables:**
+   In your Vercel dashboard, add the following environment variables:
+
+   ```
+   DATABASE_URL=postgresql://your-neon-connection-string
+   NEXTAUTH_SECRET=your-secure-random-secret-here
+   NEXTAUTH_URL=https://your-vercel-app-url.vercel.app
+   NEXT_PUBLIC_SOCKET_URL=https://your-vercel-app-url.vercel.app
+   EMAIL_FROM=noreply@yourdomain.com
+   EMAIL_SMTP_HOST=smtp.gmail.com
+   EMAIL_SMTP_PORT=587
+   EMAIL_SMTP_USER=your-email@gmail.com
+   EMAIL_SMTP_PASS=your-app-password
+   EMAIL_SECURE=false
+   APP_NAME=Privora12
+   APP_URL=https://your-vercel-app-url.vercel.app
+   ```
+
+### Database Setup
+
+1. **Create Neon PostgreSQL Database:**
+   - Sign up at [neon.tech](https://neon.tech)
+   - Create a new project
+   - Copy the connection string
+
+2. **Run Database Migrations:**
+   ```bash
+   npx prisma db push
+   ```
+
+### Deployment
+
+1. **Connect to Vercel:**
+   ```bash
+   npx vercel --prod
+   ```
+
+2. **Set Environment Variables** in Vercel dashboard under Project Settings > Environment Variables
+
+3. **Deploy:**
+   ```bash
+   npx vercel --prod
+   ```
+
+## 🛠️ Tech Stack
+
+- **Framework:** Next.js 16 (App Router)
+- **Database:** PostgreSQL (Neon)
+- **ORM:** Prisma
+- **Authentication:** NextAuth.js
+- **Real-time:** Socket.io
+- **File Storage:** Vercel Blob
+- **Email:** Nodemailer (Gmail SMTP)
+- **Deployment:** Vercel
+- **Styling:** Tailwind CSS
 
 ## Learn More
 
