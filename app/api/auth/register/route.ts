@@ -5,6 +5,14 @@ import { getPrismaClient } from "@/lib/prisma"
 export async function POST(request: NextRequest) {
   try {
     const prisma = await getPrismaClient()
+
+    if (!prisma) {
+      return NextResponse.json({
+        error: "Database not available",
+        details: "Database connection is not configured"
+      }, { status: 503 })
+    }
+
     const { name, email, password } = await request.json()
 
     if (!name || !email || !password) {
