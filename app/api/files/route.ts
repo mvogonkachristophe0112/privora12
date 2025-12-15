@@ -8,9 +8,6 @@ import { logAuditEvent, AuditAction, AuditSeverity } from "@/lib/audit"
 import { deliveryTracker } from "@/lib/delivery-tracker"
 import { PathSanitizer, InputValidator, ContentSecurity, RateLimiter } from "@/lib/security"
 import { createValidationError, createQuotaExceededError, handleApiError } from "@/lib/error-handling"
-import fs from 'fs/promises'
-import path from 'path'
-import crypto from 'crypto'
 
 export async function GET(request: NextRequest) {
   try {
@@ -256,7 +253,6 @@ export async function POST(request: NextRequest) {
     }
 
     const shareMode = formData.get('shareMode') as string
-    const deliveryMode = formData.get('deliveryMode') as string // New parameter for LAN delivery
 
     console.log('=== UPLOAD REQUEST START ===')
     console.log('File provided:', !!file)
@@ -266,7 +262,6 @@ export async function POST(request: NextRequest) {
     console.log('Parsed recipients:', recipients)
     console.log('Recipients length:', recipients.length)
     console.log('Share mode:', shareMode)
-    console.log('Delivery mode:', deliveryMode)
     console.log('Encrypt:', encrypt)
     console.log('Encryption key provided:', !!encryptionKey)
     console.log('Session user email:', session.user.email)
@@ -306,28 +301,17 @@ export async function POST(request: NextRequest) {
       console.log('No encryption applied')
     }
 
-    console.log('Starting local file storage...')
-    // Generate secure unique filename for local storage
-    const uniqueId = crypto.randomUUID()
-    const sanitizedFileName = PathSanitizer.sanitizeFilename(finalFileName)
-    const secureFileName = PathSanitizer.generateSecureFilename(sanitizedFileName, 'upload')
-    const uploadDir = path.resolve(process.cwd(), 'storage', 'uploads')
+    console.log('Starting cloud file storage...')
+    // Upload to Vercel Blob storage
+    const { put } = await import('@vercel/blob')
+    const blob = await put(finalFileName, fileData, {
+      access: 'public',
+      contentType: file.type
+    })
+    console.log('Cloud file storage successful, URL:', blob.url)
 
-    // Sanitize upload directory path
-    const sanitizedUploadDir = PathSanitizer.sanitizeFilePath(uploadDir, process.cwd())
-
-    // Ensure upload directory exists with proper permissions
-    await fs.mkdir(sanitizedUploadDir, { recursive: true, mode: 0o755 })
-
-    // Write file to local storage with security checks
-    const filePath = path.join(sanitizedUploadDir, secureFileName)
-    const sanitizedFilePath = PathSanitizer.sanitizeFilePath(filePath, sanitizedUploadDir)
-
-    await fs.writeFile(sanitizedFilePath, Buffer.from(fileData))
-    console.log('Local file storage successful, path:', sanitizedFilePath)
-
-    // Create local URL for file access
-    const localUrl = `/api/files/download/local/${secureFileName}`
+    // Use cloud URL for file access
+    const cloudUrl = blob.url
 
     console.log('Saving to database...')
     const maxRetries = 3
@@ -343,7 +327,7 @@ export async function POST(request: NextRequest) {
             originalName: file.name,
             size: file.size,
             type: file.type,
-            url: localUrl,
+            url: cloudUrl,
             encrypted: encrypt,
             encryptionKey: encrypt ? finalEncryptionKey : null,
             fileType: type,
@@ -522,96 +506,6 @@ export async function POST(request: NextRequest) {
       console.log('=== ENHANCED SHARING LOGIC END ===')
     }
 
-    // Handle LAN delivery mode - direct file delivery to specific recipients
-    if (deliveryMode === 'lan' && recipients.length > 0) {
-      console.log('=== LAN DELIVERY MODE START ===')
-      console.log('Recipients for LAN delivery:', recipients.length)
-
-      // Get client IP address for tracking
-      const clientIP = request.headers.get('x-forwarded-for') ||
-                      request.headers.get('x-real-ip') ||
-                      '127.0.0.1'
-
-      // Process LAN deliveries
-      const deliveryResults = await processLanDeliveries(
-        prisma,
-        newFile.id,
-        session.user.id,
-        session.user.email,
-        recipients,
-        clientIP
-      )
-
-      // Track delivery status for each successful delivery
-      const successfulDeliveries = deliveryResults.filter(r => r.success)
-      if (successfulDeliveries.length > 0) {
-        for (const result of successfulDeliveries) {
-          try {
-            // Create delivery tracking record
-            const deliveryRecord = await prisma.fileDelivery.create({
-              data: {
-                fileId: newFile.id,
-                senderId: session.user.id,
-                recipientId: result.recipientUser.id,
-                status: 'PENDING',
-                senderIp: clientIP,
-                recipientIp: null, // Will be updated when recipient downloads
-                deliveryAttempts: 0,
-                maxDeliveryAttempts: 3,
-                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-                createdAt: new Date(),
-                updatedAt: new Date()
-              }
-            })
-
-            console.log(`📦 LAN delivery record created for ${result.email}: ${deliveryRecord.id}`)
-
-            // Emit targeted real-time notification for LAN delivery
-            const delivered = emitToUser(result.recipientUser.id, 'lan-file-delivery', {
-              shareId: deliveryRecord.id, // Use delivery ID as share ID for LAN
-              fileId: newFile.id,
-              fileName: newFile.name,
-              senderEmail: session.user.email,
-              senderId: session.user.id,
-              receiverEmail: result.email,
-              receiverId: result.recipientUser.id,
-              deliveryId: deliveryRecord.id,
-              status: 'pending',
-              deliveredAt: new Date().toISOString(),
-              deliveryType: 'lan'
-            })
-
-            if (delivered) {
-              console.log(`📡 LAN delivery notification sent to user ${result.recipientUser.id}`)
-            } else {
-              console.warn(`LAN delivery notification failed - user ${result.recipientUser.id} not connected`)
-            }
-
-          } catch (deliveryError) {
-            console.error(`Failed to create delivery record for ${result.email}:`, deliveryError)
-          }
-        }
-      }
-
-      // Audit logging for LAN delivery
-      await logAuditEvent({
-        userId: session.user.id,
-        action: AuditAction.FILE_SHARE,
-        resource: 'file_delivery',
-        resourceId: newFile.id,
-        details: {
-          fileName: newFile.name,
-          deliveryMode: 'lan',
-          recipientsCount: recipients.length,
-          clientIP,
-          successfulDeliveries: successfulDeliveries.length,
-          failedDeliveries: deliveryResults.filter(r => !r.success).length
-        },
-        severity: AuditSeverity.LOW
-      })
-
-      console.log('=== LAN DELIVERY MODE END ===')
-    }
 
     // DELIVERY GUARANTEE: Final verification before response
     let finalSuccessfulShares = 0
@@ -668,13 +562,14 @@ export async function POST(request: NextRequest) {
     console.log('Response message:', responseMessage)
     console.log('=== UPLOAD REQUEST END ===\n')
 
-    // Email notifications disabled for offline LAN deployment
-    // In a real offline deployment, you could implement local notifications here
-    console.log('Offline mode: Email notifications disabled')
+    // Send email notifications for successful shares
+    if (finalSuccessfulShares > 0) {
+      console.log('Sending email notifications for', finalSuccessfulShares, 'successful shares')
+      // Email notification logic would go here
+    }
 
     return NextResponse.json({
       ...newFile,
-      localUrl: localUrl,
       success: responseStatus,
       message: responseMessage,
       sharingResults: shareMode === 'share' ? {
@@ -841,107 +736,6 @@ async function processUserShares(
   return results
 }
 
-// Helper function to process LAN deliveries
-async function processLanDeliveries(
-  prisma: any,
-  fileId: string,
-  senderId: string,
-  senderEmail: string,
-  recipients: string[],
-  clientIP: string
-) {
-  const results = []
-
-  for (const email of recipients) {
-    try {
-      const normalizedEmail = email.trim().toLowerCase()
-
-      // Enhanced email validation
-      const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
-      if (!emailRegex.test(normalizedEmail)) {
-        results.push({
-          email,
-          success: false,
-          error: 'Invalid email format',
-          deliveryType: 'lan'
-        })
-        continue
-      }
-
-      // Prevent self-delivery
-      if (normalizedEmail === senderEmail?.toLowerCase()) {
-        results.push({
-          email,
-          success: false,
-          error: 'Cannot deliver file to yourself',
-          deliveryType: 'lan'
-        })
-        continue
-      }
-
-      // Check if user exists
-      const recipientUser = await prisma.user.findUnique({
-        where: { email: normalizedEmail },
-        select: { id: true, email: true, name: true }
-      })
-
-      if (!recipientUser) {
-        results.push({
-          email,
-          success: false,
-          error: 'Recipient email not registered in the system. They must create an account first.',
-          deliveryType: 'lan'
-        })
-        continue
-      }
-
-      // Check for existing delivery to prevent duplicates
-      const existingDelivery = await prisma.fileDelivery.findFirst({
-        where: {
-          fileId,
-          recipientId: recipientUser.id,
-          status: { in: ['PENDING', 'DELIVERED'] },
-          expiresAt: { gt: new Date() }
-        }
-      })
-
-      if (existingDelivery) {
-        results.push({
-          email,
-          success: false,
-          error: 'File already delivered to this recipient',
-          deliveryType: 'lan',
-          existingDelivery: true
-        })
-        continue
-      }
-
-      results.push({
-        email: normalizedEmail,
-        success: true,
-        recipientUser,
-        deliveryType: 'lan'
-      })
-
-    } catch (error) {
-      console.error('Error processing LAN delivery for', email, ':', error)
-
-      let errorMessage = 'Unknown error occurred'
-      if (error instanceof Error) {
-        errorMessage = error.message
-      }
-
-      results.push({
-        email,
-        success: false,
-        error: `Failed to process delivery: ${errorMessage}`,
-        deliveryType: 'lan'
-      })
-    }
-  }
-
-  return results
-}
 
 // Email notifications disabled for offline LAN deployment
 // In a real offline deployment, you could implement local notifications here

@@ -17,31 +17,37 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
           password: { label: "Password", type: "password" }
         },
         async authorize(credentials) {
-          if (!credentials?.email || !credentials?.password) {
-            return null
-          }
+           console.log('Sign-in attempt for:', credentials?.email)
+           if (!credentials?.email || !credentials?.password) {
+             console.log('Missing credentials')
+             return null
+           }
 
-          const user = await prisma.user.findUnique({
-            where: { email: credentials.email }
-          })
+           const user = await prisma.user.findUnique({
+             where: { email: credentials.email }
+           })
 
-          if (!user || !user.password) {
-            return null
-          }
+           if (!user || !user.password) {
+             console.log('User not found or no password:', !!user)
+             return null
+           }
 
-          const isPasswordValid = await bcrypt.compare(credentials.password, user.password)
+           const isPasswordValid = await bcrypt.compare(credentials.password, user.password)
+           console.log('Password valid:', isPasswordValid)
 
-          if (!isPasswordValid) {
-            return null
-          }
+           if (!isPasswordValid) {
+             console.log('Invalid password')
+             return null
+           }
 
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-          }
-        }
+           console.log('Sign-in successful for:', user.email)
+           return {
+             id: user.id,
+             email: user.email,
+             name: user.name,
+             role: user.role,
+           }
+         }
       })
     ],
     session: {
