@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/Toast'
@@ -40,50 +40,180 @@ interface DownloadableFile {
   }
 }
 
+interface ApiResponse {
+  files: DownloadableFile[]
+  total: number
+  page: number
+  limit: number
+  hasMore: boolean
+}
+
 function DownloadContent() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const { addToast } = useToast()
 
+  // State management
   const [files, setFiles] = useState<DownloadableFile[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
-  const [fetched, setFetched] = useState(false)
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [totalFiles, setTotalFiles] = useState(0)
+  const [newFilesCount, setNewFilesCount] = useState(0)
 
+  // Refs for polling and session tracking
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const lastFetchRef = useRef<number>(0)
+  const isMountedRef = useRef(true)
+  const initialFetchDoneRef = useRef(false)
+
+  // Constants
+  const POLLING_INTERVAL = 30000 // 30 seconds
+  const ITEMS_PER_PAGE = 20
+
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+    }
+    isMountedRef.current = false
+  }, [])
+
+  // Enhanced session handling - only fetch when session is authenticated
   useEffect(() => {
     if (status === 'loading') return
     if (!session) {
       router.push('/login')
       return
     }
-    fetchFiles()
+
+    // Only fetch if we haven't done initial fetch or if it's been a while
+    if (!initialFetchDoneRef.current) {
+      fetchFiles(true)
+      initialFetchDoneRef.current = true
+    }
+
+    // Start polling for updates
+    startPolling()
+
+    return cleanup
   }, [session, status, router])
 
-  const fetchFiles = async () => {
-    if (fetched) return
+  // Start polling for new files
+  const startPolling = useCallback(() => {
+    if (pollingIntervalRef.current) return // Already polling
+
+    pollingIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current && session) {
+        fetchFiles(false, true) // Silent fetch for polling
+      }
+    }, POLLING_INTERVAL)
+  }, [session])
+
+  // Stop polling
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+    }
+  }, [])
+
+  // Fetch files with improved error handling and duplicate prevention
+  const fetchFiles = useCallback(async (isInitialLoad = false, isPolling = false) => {
+    if (!session) return
+
+    // Prevent duplicate fetches within 1 second
+    const now = Date.now()
+    if (now - lastFetchRef.current < 1000 && !isInitialLoad) return
+    lastFetchRef.current = now
 
     try {
-      setLoading(true)
-      const response = await fetch('/api/files/received?page=1&limit=100')
+      if (!isPolling) {
+        setLoading(true)
+      }
+      if (isInitialLoad) {
+        setInitialLoading(true)
+      }
+
+      const response = await fetch(`/api/files/received?page=${page}&limit=${ITEMS_PER_PAGE}`)
       if (!response.ok) {
         throw new Error('Failed to fetch received files')
       }
 
-      const data = await response.json()
-      setFiles(data.files || [])
-      setError(null)
-      setFetched(true)
+      const data: ApiResponse = await response.json()
+
+      if (isMountedRef.current) {
+        const previousFileCount = files.length
+        setFiles(data.files)
+        setTotalFiles(data.total)
+        setHasMore(data.hasMore)
+
+        // Check for new files and show notification
+        if (!isInitialLoad && !isPolling && data.files.length > previousFileCount) {
+          const newCount = data.files.length - previousFileCount
+          setNewFilesCount(prev => prev + newCount)
+
+          addToast({
+            type: 'success',
+            title: 'New files received!',
+            message: `You have ${newCount} new file${newCount > 1 ? 's' : ''} available for download.`,
+            duration: 5000
+          })
+        }
+
+        setError(null)
+      }
     } catch (err) {
       console.error('Error fetching files:', err)
-      setError(`Failed to fetch received files: ${err instanceof Error ? err.message : 'Unknown error'}`)
-    } finally {
-      setLoading(false)
-    }
-  }
+      if (isMountedRef.current) {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+        setError(`Failed to fetch received files: ${errorMessage}`)
 
+        if (!isPolling) {
+          addToast({
+            type: 'error',
+            title: 'Failed to load files',
+            message: 'Unable to fetch your received files. Please try again.',
+            duration: 5000
+          })
+        }
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setLoading(false)
+        if (isInitialLoad) {
+          setInitialLoading(false)
+        }
+      }
+    }
+  }, [session, page, files.length, addToast])
+
+  // Load more files for pagination
+  const loadMoreFiles = useCallback(() => {
+    if (!loading && hasMore) {
+      setPage(prev => prev + 1)
+    }
+  }, [loading, hasMore])
+
+  // Refresh files manually
+  const refreshFiles = useCallback(() => {
+    setPage(1)
+    setNewFilesCount(0)
+    fetchFiles(true)
+  }, [fetchFiles])
+
+  // Clear new files notification
+  const clearNewFilesNotification = useCallback(() => {
+    setNewFilesCount(0)
+  }, [])
+
+  // Handle file download with enhanced error handling
   const handleDownload = async (file: DownloadableFile) => {
-    if (downloading) return
+    if (downloading || !file.permissions.includes('DOWNLOAD')) return
 
     setDownloading(file.id)
 
@@ -206,7 +336,7 @@ function DownloadContent() {
 
       // Refresh the file list to update access counts
       setTimeout(() => {
-        fetchFiles()
+        fetchFiles(false, true)
       }, 1000)
 
     } catch (error) {
@@ -222,6 +352,7 @@ function DownloadContent() {
     }
   }
 
+  // Utility functions
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -269,12 +400,13 @@ function DownloadContent() {
     return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">Available</span>
   }
 
-  if (status === 'loading') {
+  // Loading states
+  if (status === 'loading' || initialLoading) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p>Loading...</p>
+          <p>Loading your files...</p>
         </div>
       </div>
     )
@@ -292,18 +424,7 @@ function DownloadContent() {
     )
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p>Loading your files...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
+  if (error && files.length === 0) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
@@ -311,7 +432,7 @@ function DownloadContent() {
           <h2 className="text-2xl font-semibold mb-4">Error Loading Files</h2>
           <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
           <button
-            onClick={() => fetchFiles()}
+            onClick={() => fetchFiles(true)}
             className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition-colors"
           >
             Try Again
@@ -326,17 +447,24 @@ function DownloadContent() {
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto">
 
-          {/* Header */}
+          {/* Header with notification badge */}
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
             <div className="flex items-center gap-4">
-              <h1 className="text-2xl md:text-3xl font-bold">Download Files</h1>
+              <div className="relative">
+                <h1 className="text-2xl md:text-3xl font-bold">Download Files</h1>
+                {newFilesCount > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center animate-pulse">
+                    {newFilesCount > 9 ? '9+' : newFilesCount}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="text-sm text-gray-500">
-                {files.length} files available
+                {totalFiles} files available
               </div>
               <button
-                onClick={() => fetchFiles()}
+                onClick={refreshFiles}
                 disabled={loading}
                 className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-3 py-2 rounded-lg transition-colors text-sm disabled:cursor-not-allowed"
                 title="Refresh files"
@@ -345,6 +473,31 @@ function DownloadContent() {
               </button>
             </div>
           </div>
+
+          {/* New files notification */}
+          {newFilesCount > 0 && (
+            <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4 mb-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="text-green-600 dark:text-green-400">🎉</div>
+                  <div>
+                    <h3 className="font-semibold text-green-800 dark:text-green-200">
+                      New files received!
+                    </h3>
+                    <p className="text-sm text-green-700 dark:text-green-300">
+                      You have {newFilesCount} new file{newFilesCount > 1 ? 's' : ''} available for download.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={clearNewFilesNotification}
+                  className="text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200 text-sm underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Files List */}
           {files.length === 0 ? (
@@ -363,7 +516,7 @@ function DownloadContent() {
               </button>
             </div>
           ) : (
-            <div className="grid gap-4">
+            <div className="space-y-4">
               {files.map((file) => (
                 <div
                   key={file.id}
@@ -433,6 +586,43 @@ function DownloadContent() {
                   </div>
                 </div>
               ))}
+
+              {/* Load More Button */}
+              {hasMore && (
+                <div className="text-center pt-6">
+                  <button
+                    onClick={loadMoreFiles}
+                    disabled={loading}
+                    className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-6 py-3 rounded-lg transition-colors disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        Loading...
+                      </div>
+                    ) : (
+                      'Load More Files'
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Error message for partial failures */}
+          {error && files.length > 0 && (
+            <div className="mt-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <div className="text-red-600 dark:text-red-400">⚠️</div>
+                <div>
+                  <h3 className="font-semibold text-red-800 dark:text-red-200">
+                    Connection issue
+                  </h3>
+                  <p className="text-sm text-red-700 dark:text-red-300">
+                    {error}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
