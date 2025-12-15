@@ -5,13 +5,13 @@
 # Make sure the app is running
 npm run dev
 
-# Open browser to: http://localhost:3000
+# Open browser to: https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app
 ```
 
 ## 📋 MANUAL TESTING STEPS
 
 ### **Step 1: Verify Application Loads**
-1. Open http://localhost:3000
+1. Open https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app
 2. Should see Privora12 landing page
 3. No console errors in browser dev tools
 

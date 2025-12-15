@@ -139,7 +139,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
     if (typeof window === 'undefined') return
 
     // Initialize socket connection
-    const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
+    const socketConnection = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app', {
       path: '/api/socket',
     })
 

@@ -7,7 +7,7 @@ const fs = require('fs')
 const path = require('path')
 
 // Configuration
-const BASE_URL = 'http://localhost:3000'
+const BASE_URL = 'https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app'
 const API_BASE = `${BASE_URL}/api`
 
 // Test results tracking

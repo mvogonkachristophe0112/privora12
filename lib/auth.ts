@@ -51,6 +51,7 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
       async jwt({ token, user }) {
         if (user) {
           token.role = user.role
+          token.email = user.email
         }
         return token
       },
@@ -58,6 +59,10 @@ export async function getAuthOptions(): Promise<NextAuthOptions> {
         if (token) {
           session.user.id = token.sub!
           session.user.role = token.role as string
+          // Ensure email is available in session
+          if (token.email) {
+            session.user.email = token.email
+          }
         }
         return session
       },

@@ -121,7 +121,7 @@ export const initSocket = (httpServer: NetServer): ServerIO => {
   io = new ServerIO(httpServer, {
     path: '/api/socket',
     cors: {
-      origin: process.env.NEXTAUTH_URL || 'http://localhost:3000',
+      origin: process.env.NEXTAUTH_URL || 'https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app',
       methods: ['GET', 'POST'],
     },
   })

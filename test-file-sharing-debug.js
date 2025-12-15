@@ -84,7 +84,7 @@ async function testFileSharing() {
   console.log('   □ Verify FileShare records in database\n')
 
   console.log('🚀 READY TO TEST FILE SHARING!')
-  console.log('Visit: http://localhost:3000')
+  console.log('Visit: https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app')
   console.log('Prisma Studio: http://localhost:5556')
 }
 

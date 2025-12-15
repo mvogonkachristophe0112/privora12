@@ -69,7 +69,7 @@ export async function POST(
 
     // Generate download URL with token
     const downloadToken = `share_${shareId}_${Date.now()}`
-    const downloadUrl = `${process.env.APP_URL || 'http://localhost:3000'}/receive?token=${downloadToken}&share=${shareId}`
+    const downloadUrl = `${process.env.APP_URL || 'https://privora12-jhpk3ne82-mvogonka-christophes-projects.vercel.app'}/receive?token=${downloadToken}&share=${shareId}`
 
     // Send notification email
     const emailResult = await sendFileShareNotification({
