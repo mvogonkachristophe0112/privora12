@@ -16,16 +16,27 @@ export default function Login() {
     e.preventDefault()
     setError("")
 
+    console.log('Attempting login for:', formData.email)
     const result = await signIn("credentials", {
       email: formData.email,
       password: formData.password,
       redirect: false
     })
 
+    console.log('Sign-in result:', result)
     if (result?.error) {
-      setError("Invalid credentials")
-    } else {
+      console.error('Sign-in error:', result.error)
+      if (result.error === 'CredentialsSignin') {
+        setError("Invalid credentials")
+      } else {
+        setError("Sign-in server error. Please try again.")
+      }
+    } else if (result?.ok) {
+      console.log('Sign-in successful, redirecting to dashboard')
       router.push("/dashboard")
+    } else {
+      console.log('Sign-in result unclear:', result)
+      setError("An unexpected error occurred")
     }
   }
 

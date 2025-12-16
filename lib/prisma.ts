@@ -2,14 +2,18 @@
 let prisma: any = null
 
 export async function getPrismaClient() {
+  console.log('getPrismaClient called')
   // Skip database connection during build time if DATABASE_URL is not set
   if (!process.env.DATABASE_URL) {
     console.warn('DATABASE_URL not set, skipping database connection')
     return null
   }
 
+  console.log('DATABASE_URL is set, attempting to connect...')
+
   if (!prisma) {
     try {
+      console.log('Creating new PrismaClient instance...')
       const { PrismaClient } = await import('@prisma/client')
       prisma = new PrismaClient({
         log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
@@ -19,6 +23,7 @@ export async function getPrismaClient() {
           },
         },
       })
+      console.log('PrismaClient created successfully')
 
       // In development, attach to global to prevent hot reload issues
       if (process.env.NODE_ENV !== 'production') {
